@@ -1,18 +1,18 @@
 version: '3.8'
 
 services:
-  neosync:
+  vaultsync:
     build: .
-    container_name: neosync_server
+    container_name: vaultsync_server
     restart: unless-stopped
     ports:
       - "8080:8000"
     environment:
       - DB_HOST=db
-      - DB_NAME=neosync
-      - DB_USER=neosync
-      - DB_PASS=neosync_secure_password
-      - NEOSYNC_SECRET=REPLACE_WITH_YOUR_OWN_SECRET_KEY
+      - DB_NAME=vaultsync
+      - DB_USER=vaultsync
+      - DB_PASS=vaultsync_secure_password
+      - VAULTSYNC_SECRET=REPLACE_WITH_YOUR_OWN_SECRET_KEY
     volumes:
       - ./storage:/app/storage
     depends_on:
@@ -20,12 +20,12 @@ services:
 
   db:
     image: postgres:15-alpine
-    container_name: neosync_db
+    container_name: vaultsync_db
     restart: unless-stopped
     environment:
-      - POSTGRES_DB=neosync
-      - POSTGRES_USER=neosync
-      - POSTGRES_PASSWORD=neosync_secure_password
+      - POSTGRES_DB=vaultsync
+      - POSTGRES_USER=vaultsync
+      - POSTGRES_PASSWORD=vaultsync_secure_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
 

@@ -3,9 +3,9 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 DB_HOST = os.environ.get("DB_HOST", "db")
-DB_NAME = os.environ.get("DB_NAME", "neosync")
-DB_USER = os.environ.get("DB_USER", "neosync")
-DB_PASS = os.environ.get("DB_PASS", "neosync_secure_password") # Use the default from compose
+DB_NAME = os.environ.get("DB_NAME", "vaultsync")
+DB_USER = os.environ.get("DB_USER", "vaultsync")
+DB_PASS = os.environ.get("DB_PASS", "vaultsync_secure_password") # Use the default from compose
 
 def get_db_connection():
     return psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASS)

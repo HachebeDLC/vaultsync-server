@@ -10,10 +10,11 @@ from cryptography.hazmat.backends import default_backend
 
 # --- PROTOCOL CONSTANTS (Must match Android Native) ---
 BLOCK_SIZE_PLAIN = 1024 * 1024
-MAGIC_SIZE = 7
+MAGIC = b"VAULTSYNC"
+MAGIC_SIZE = len(MAGIC)
 IV_SIZE = 16
 PADDING_OVERHEAD = 16
-ENCRYPTED_BLOCK_SIZE = MAGIC_SIZE + IV_SIZE + BLOCK_SIZE_PLAIN + PADDING_OVERHEAD # 1,048,615
+ENCRYPTED_BLOCK_SIZE = MAGIC_SIZE + IV_SIZE + BLOCK_SIZE_PLAIN + PADDING_OVERHEAD # 1,048,617
 
 def derive_master_key(password, email):
     # Matches Flutter ApiClient: sha256(password:email)
@@ -26,29 +27,28 @@ def decrypt_file(input_data, master_key_b64):
     if missing_padding: master_key_b64 += '=' * (4 - missing_padding)
     key_bytes = base64.urlsafe_b64decode(master_key_b64)[:32]
 
-    magic = b"NEOSYNC"
     output_data = bytearray()
     offset = 0
     
-    if len(input_data) < 7 or input_data[0:7] != magic:
+    if len(input_data) < MAGIC_SIZE or input_data[0:MAGIC_SIZE] != MAGIC:
         print("ℹ️ No encryption magic detected. Processing as plain data.")
         return input_data
 
     while offset < len(input_data):
         # 1. Verify Header
-        if input_data[offset:offset+7] != magic:
+        if input_data[offset:offset+MAGIC_SIZE] != MAGIC:
             print(f"⚠️ Warning: Magic mismatch at {offset}. Data may be truncated.")
             break
         
         # 2. Extract IV
-        iv = input_data[offset+7:offset+23]
+        iv = input_data[offset+MAGIC_SIZE : offset+MAGIC_SIZE+IV_SIZE]
         
-        # 3. Determine Block Boundary (Fixed Size vs Remaining)
-        # We don't SEARCH for magic, we calculate where the next one SHOULD be.
+        # 3. Determine Block Boundary
         remaining_data = len(input_data) - offset
         current_block_size = min(ENCRYPTED_BLOCK_SIZE, remaining_data)
         
-        encrypted_payload = input_data[offset+23 : offset+current_block_size]
+        payload_start = offset + MAGIC_SIZE + IV_SIZE
+        encrypted_payload = input_data[payload_start : offset+current_block_size]
         offset += current_block_size
         
         # 4. Decrypt
@@ -67,7 +67,7 @@ def decrypt_file(input_data, master_key_b64):
     return output_data
 
 def run_verify(base_url, email, password, remote_path):
-    print(f"🚀 Connecting to Apollo at {base_url}...")
+    print(f"🚀 Connecting to VaultSync Server at {base_url}...")
     try:
         resp = requests.post(f"{base_url}/login", json={"email": email, "password": password})
         resp.raise_for_status()

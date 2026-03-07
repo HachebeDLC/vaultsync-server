@@ -19,19 +19,19 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 # --- Configuration ---
-SECRET_KEY = os.environ.get("NEOSYNC_SECRET", "CHANGE_THIS_IN_PROD")
+SECRET_KEY = os.environ.get("VAULTSYNC_SECRET", "CHANGE_THIS_IN_PROD")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 30
 STORAGE_DIR = os.path.abspath("storage")
 
 # Database Config
 DB_HOST = os.environ.get("DB_HOST", "db")
-DB_NAME = os.environ.get("DB_NAME", "neosync")
-DB_USER = os.environ.get("DB_USER", "neosync")
-DB_PASS = os.environ.get("DB_PASS", "neosync_password")
+DB_NAME = os.environ.get("DB_NAME", "vaultsync")
+DB_USER = os.environ.get("DB_USER", "vaultsync")
+DB_PASS = os.environ.get("DB_PASS", "vaultsync_password")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("NeoSync")
+logger = logging.getLogger("VaultSync")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
@@ -66,7 +66,69 @@ def calculate_file_blocks(file_path: str, chunk_size: int = 1024 * 1024) -> List
             hashes.append(hashlib.md5(chunk).hexdigest())
     return hashes
 
-app = FastAPI(title="NeoSync Server")
+class VersionManager:
+    def __init__(self, storage_root: str, max_versions: int = 5):
+        self.storage_root = storage_root
+        self.max_versions = max_versions
+
+    def get_version_dir(self, user_id: int) -> str:
+        d = os.path.join(self.storage_root, str(user_id), ".versions")
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def create_version(self, user_id: int, path: str, device_name: str):
+        """Moves current file to .versions with a timestamp."""
+        source = os.path.normpath(os.path.join(self.storage_root, str(user_id), path.lstrip("/\\.")))
+        if not os.path.exists(source): return
+
+        v_dir = self.get_version_dir(user_id)
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        # Sanitize path for filename
+        safe_name = path.replace("/", "_").replace("\\", "_").replace(" ", "_")
+        v_filename = f"{safe_name}.~{timestamp}~{device_name}~"
+        dest = os.path.join(v_dir, v_filename)
+        
+        try:
+            shutil.copy2(source, dest)
+            self._rotate(user_id, path)
+            logger.info(f"📦 VERSIONED: {path} -> {v_filename}")
+        except Exception as e:
+            logger.error(f"Version error: {e}")
+
+    def _rotate(self, user_id: int, path: str):
+        """Keep only max_versions for a specific file."""
+        v_dir = self.get_version_dir(user_id)
+        safe_name = path.replace("/", "_").replace("\\", "_").replace(" ", "_")
+        prefix = f"{safe_name}.~"
+        versions = sorted([f for f in os.listdir(v_dir) if f.startswith(prefix)])
+        while len(versions) > self.max_versions:
+            os.remove(os.path.join(v_dir, versions.pop(0)))
+
+    def list_versions(self, user_id: int, path: str) -> List[dict]:
+        v_dir = self.get_version_dir(user_id)
+        safe_name = path.replace("/", "_").replace("\\", "_").replace(" ", "_")
+        prefix = f"{safe_name}.~"
+        results = []
+        if not os.path.exists(v_dir): return []
+        
+        versions = sorted([f for f in os.listdir(v_dir) if f.startswith(prefix)], reverse=True)
+        for i, v in enumerate(versions):
+            full_path = os.path.join(v_dir, v)
+            try:
+                parts = v.split("~")
+                results.append({
+                    "version": i + 1,
+                    "filename": v,
+                    "device_name": parts[2] if len(parts) > 2 else "Unknown",
+                    "updated_at": int(os.path.getmtime(full_path) * 1000),
+                    "size": os.path.getsize(full_path)
+                })
+            except: continue
+        return results
+
+version_manager = VersionManager(STORAGE_DIR)
+
+app = FastAPI(title="VaultSync Server")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 os.makedirs(STORAGE_DIR, exist_ok=True)
 
@@ -94,7 +156,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
 
 @app.get("/")
 async def health_check():
-    return {"status": "online", "version": "NeoSync-Syncthing-v11-Full-Auth"}
+    return {"status": "online", "version": "VaultSync-v1.1-Stable"}
 
 @app.post("/register")
 async def register(user: UserRegister):
@@ -138,6 +200,72 @@ async def list_files(current_user = Depends(get_current_user)):
     files = c.fetchall(); conn.close()
     return {"files": files}
 
+@app.get("/api/v1/conflicts")
+async def list_conflicts(current_user = Depends(get_current_user)):
+    user_id = current_user['id']
+    user_storage = os.path.join(STORAGE_DIR, str(user_id))
+    conflicts = []
+    
+    if os.path.exists(user_storage):
+        for root, dirs, files in os.walk(user_storage):
+            for file in files:
+                if ".sync-conflict-" in file:
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, user_storage)
+                    # Try to find who owned it if possible
+                    parts = file.split("-")
+                    device_name = parts[-1] if len(parts) > 1 else "Unknown"
+                    conflicts.append({
+                        "path": rel_path,
+                        "device_name": device_name,
+                        "size": os.path.getsize(full_path),
+                        "updated_at": int(os.path.getmtime(full_path) * 1000)
+                    })
+    return {"conflicts": conflicts}
+
+@app.get("/api/v1/versions")
+async def list_file_versions(path: str, current_user = Depends(get_current_user)):
+    return {"versions": version_manager.list_versions(current_user['id'], path)}
+
+@app.get("/api/v1/versions/restore")
+async def restore_version(remoteFilename: str, version: int, current_user = Depends(get_current_user)):
+    versions = version_manager.list_versions(current_user['id'], remoteFilename)
+    if version <= 0 or version > len(versions): raise HTTPException(status_code=404)
+    
+    v_info = versions[version-1]
+    v_path = os.path.join(version_manager.get_version_dir(current_user['id']), v_info['filename'])
+    return FileResponse(v_path, media_type="application/octet-stream")
+
+@app.delete("/api/v1/files")
+async def delete_file(request: Request, current_user = Depends(get_current_user)):
+    body = await request.json()
+    path = body.get("filename")
+    user_id = current_user['id']
+    
+    # Version before delete!
+    version_manager.create_version(user_id, path, "Server-Delete")
+    
+    safe_path = os.path.normpath(os.path.join(STORAGE_DIR, str(user_id), path.lstrip("/\\.")))
+    if os.path.exists(safe_path): os.remove(safe_path)
+    
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM files WHERE user_id = %s AND path = %s", (user_id, path))
+    conn.commit(); conn.close()
+    return {"message": "Deleted"}
+
+@app.delete("/api/v1/systems/{system_id}")
+async def delete_system(system_id: str, current_user = Depends(get_current_user)):
+    user_id = current_user['id']
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM files WHERE user_id = %s AND path LIKE %s", (user_id, f"{system_id}/%"))
+    conn.commit(); conn.close()
+    
+    system_dir = os.path.join(STORAGE_DIR, str(user_id), system_id)
+    if os.path.exists(system_dir): shutil.rmtree(system_dir)
+    return {"message": f"System {system_id} cleared"}
+
 @app.post("/api/v1/blocks/check")
 async def check_blocks(request: Request, current_user = Depends(get_current_user)):
     body = await request.json()
@@ -154,14 +282,27 @@ async def check_blocks(request: Request, current_user = Depends(get_current_user
 @app.post("/api/v1/upload")
 async def upload_fragment(request: Request, current_user = Depends(get_current_user)):
     h = request.headers
-    path = h.get("x-neosync-path")
-    offset = int(h.get("x-neosync-offset") or 0)
+    path = h.get("x-vaultsync-path")
+    offset = int(h.get("x-vaultsync-offset") or 0)
     
     if not path: raise HTTPException(status_code=422, detail="Path missing")
     
     user_id = current_user['id']
     safe_path = os.path.normpath(os.path.join(STORAGE_DIR, str(user_id), path.lstrip("/\\.")))
     os.makedirs(os.path.dirname(safe_path), exist_ok=True)
+
+    # PRE-UPLOAD VERSIONING:
+    if offset == 0 and os.path.exists(safe_path):
+        try:
+            conn = get_db_connection()
+            c = conn.cursor(cursor_factory=RealDictCursor)
+            c.execute("SELECT device_name FROM files WHERE user_id = %s AND path = %s", (user_id, path))
+            existing = c.fetchone()
+            conn.close()
+            if existing:
+                version_manager.create_version(user_id, path, existing['device_name'])
+        except Exception as e:
+            logger.error(f"Error in pre-upload versioning: {e}")
 
     bytes_received = 0
     with open(safe_path, "r+b" if os.path.exists(safe_path) else "wb") as f:
@@ -186,7 +327,6 @@ async def finalize_upload(request: Request, current_user = Depends(get_current_u
     
     if not os.path.exists(safe_path): raise HTTPException(status_code=404)
     
-    disk_size = os.path.getsize(safe_path)
     block_hashes = calculate_file_blocks(safe_path)
     
     conn = get_db_connection()
@@ -195,11 +335,11 @@ async def finalize_upload(request: Request, current_user = Depends(get_current_u
                  VALUES (%s, %s, %s, %s, %s, %s, %s) 
                  ON CONFLICT(user_id, path) DO UPDATE SET 
                  hash=EXCLUDED.hash, size=EXCLUDED.size, updated_at=EXCLUDED.updated_at, device_name=EXCLUDED.device_name, blocks=EXCLUDED.blocks''',
-              (user_id, path, file_hash, plain_size or disk_size, updated_at, device_name, json.dumps(block_hashes)))
+              (user_id, path, file_hash, plain_size or os.path.getsize(safe_path), updated_at, device_name, json.dumps(block_hashes)))
     conn.commit(); conn.close()
     
-    logger.info(f"🏁 FINALIZED: {path} (Disk: {disk_size})")
-    return {"message": "Success", "disk_size": disk_size}
+    logger.info(f"🏁 FINALIZED: {path} (Disk: {os.path.getsize(safe_path)})")
+    return {"message": "Success", "disk_size": os.path.getsize(safe_path)}
 
 @app.post("/api/v1/download")
 async def download_file(request: Request, current_user = Depends(get_current_user)):
