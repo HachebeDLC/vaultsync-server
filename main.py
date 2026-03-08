@@ -238,6 +238,13 @@ class FinalizeRequest(BaseModel):
     updated_at: int
     device_name: str = "Unknown"
 
+class RecoverySetupRequest(BaseModel):
+    recovery_payload: str
+    recovery_salt: str
+
+class RecoveryPayloadRequest(BaseModel):
+    email: str
+
 def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -471,6 +478,25 @@ def download_file(body: FileRequest, current_user = Depends(get_current_user)):
     if not os.path.exists(safe_path): raise HTTPException(status_code=404)
     return FileResponse(safe_path, media_type="application/octet-stream")
 
+@app.post("/api/v1/auth/recovery/setup")
+def setup_recovery(body: RecoverySetupRequest, current_user = Depends(get_current_user)):
+    user_id = current_user['id']
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute("UPDATE users SET recovery_payload = %s, recovery_salt = %s WHERE id = %s",
+                  (body.recovery_payload, body.recovery_salt, user_id))
+        conn.commit()
+    return {"message": "Recovery configured"}
+
+@app.post("/api/v1/auth/recovery/payload")
+def get_recovery_payload(body: RecoveryPayloadRequest):
+    with get_db() as conn:
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        c.execute("SELECT recovery_payload, recovery_salt FROM users WHERE email = %s", (body.email,))
+        user = c.fetchone()
+    if not user or not user['recovery_payload']:
+        raise HTTPException(status_code=404, detail="Recovery not configured for this user")
+    return user
 
 
 if __name__ == "__main__":
