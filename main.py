@@ -12,6 +12,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, WebSocket, W
 from fastapi.responses import JSONResponse, Response, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 import uvicorn
 import json
@@ -397,11 +398,13 @@ async def upload_fragment(request: Request, current_user = Depends(get_current_u
 
     if offset == 0 and os.path.exists(safe_path):
         try:
-            # We wrap this sync call for safety since we're in an async def
-            with get_db() as conn:
-                c = conn.cursor(cursor_factory=RealDictCursor)
-                c.execute("SELECT device_name FROM files WHERE user_id = %s AND path = %s", (user_id, path))
-                existing = c.fetchone()
+            def get_existing_device():
+                with get_db() as conn:
+                    c = conn.cursor(cursor_factory=RealDictCursor)
+                    c.execute("SELECT device_name FROM files WHERE user_id = %s AND path = %s", (user_id, path))
+                    return c.fetchone()
+            
+            existing = await run_in_threadpool(get_existing_device)
             if existing:
                 version_manager.create_version(user_id, path, existing['device_name'])
         except Exception as e:
