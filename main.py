@@ -153,8 +153,15 @@ def init_db():
             c = conn.cursor()
             c.execute('''CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, 
-                username TEXT, encryption_key TEXT, created_at BIGINT
+                username TEXT, encryption_key TEXT, salt TEXT, created_at BIGINT
             )''')
+            
+            # Migration: Ensure 'salt' column exists for existing tables
+            c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='salt'")
+            if not c.fetchone():
+                c.execute("ALTER TABLE users ADD COLUMN salt TEXT")
+                logger.info("📡 Database migrated: added 'salt' column to 'users'")
+
             c.execute('''CREATE TABLE IF NOT EXISTS files (
                 id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id), path TEXT NOT NULL, 
                 hash TEXT, size BIGINT, updated_at BIGINT, device_name TEXT, blocks TEXT, 
@@ -239,15 +246,18 @@ def health_check():
 @app.post("/register")
 def register(user: UserRegister):
     hashed_pw = pwd_context.hash(user.password)
+    # Generate random 16-byte salt for Zero-Knowledge key derivation
+    salt = os.urandom(16).hex()
+    
     with get_db() as conn:
         c = conn.cursor()
         try:
-            c.execute("INSERT INTO users (email, password_hash, username, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
-                      (user.email, hashed_pw, user.username, int(time.time())))
+            c.execute("INSERT INTO users (email, password_hash, username, salt, created_at) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                      (user.email, hashed_pw, user.username, salt, int(time.time())))
             user_id = c.fetchone()[0]
             conn.commit()
             token = jwt.encode({"sub": str(user_id), "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)}, SECRET_KEY, algorithm=ALGORITHM)
-            return {"token": token, "user": {"id": str(user_id), "email": user.email}}
+            return {"token": token, "user": {"id": str(user_id), "email": user.email, "salt": salt}}
         except Exception as e:
             conn.rollback()
             logger.error(f"Register error: {e}")
@@ -261,8 +271,14 @@ def login(credentials: UserLogin):
         user = c.fetchone()
     if not user or not pwd_context.verify(credentials.password, user['password_hash']):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+        
     token = jwt.encode({"sub": str(user['id']), "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)}, SECRET_KEY, algorithm=ALGORITHM)
-    return {"token": token, "user": {"id": str(user['id']), "email": user['email']}}
+    
+    # Return salt for client-side encryption key derivation. 
+    # Fallback to email for legacy users who registered before the salt column was added.
+    salt = user['salt'] if user.get('salt') else user['email']
+    
+    return {"token": token, "user": {"id": str(user['id']), "email": user['email'], "salt": salt}}
 
 @app.get("/auth/me")
 def auth_me(current_user = Depends(get_current_user)):
