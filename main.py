@@ -54,6 +54,15 @@ def calculate_file_blocks(file_path: str, chunk_size: int = 1024 * 1024) -> List
             hashes.append(hashlib.sha256(chunk).hexdigest())
     return hashes
 
+def calculate_file_hash(file_path: str) -> str:
+    sha256 = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk: break
+            sha256.update(chunk)
+    return sha256.hexdigest()
+
 class VersionManager:
     def __init__(self, storage_root: str, max_versions: int = 5):
         self.storage_root = storage_root
@@ -402,6 +411,7 @@ def finalize_upload(body: FinalizeRequest, current_user = Depends(get_current_us
     if not os.path.exists(safe_path): raise HTTPException(status_code=404)
     
     block_hashes = calculate_file_blocks(safe_path)
+    actual_hash = calculate_file_hash(safe_path)
     
     with get_db() as conn:
         c = conn.cursor()
@@ -409,11 +419,11 @@ def finalize_upload(body: FinalizeRequest, current_user = Depends(get_current_us
                      VALUES (%s, %s, %s, %s, %s, %s, %s) 
                      ON CONFLICT(user_id, path) DO UPDATE SET 
                      hash=EXCLUDED.hash, size=EXCLUDED.size, updated_at=EXCLUDED.updated_at, device_name=EXCLUDED.device_name, blocks=EXCLUDED.blocks''',
-                  (user_id, body.path, body.hash, body.size or os.path.getsize(safe_path), body.updated_at, body.device_name, json.dumps(block_hashes)))
+                  (user_id, body.path, actual_hash, body.size or os.path.getsize(safe_path), body.updated_at, body.device_name, json.dumps(block_hashes)))
         conn.commit()
     
     logger.info(f"🏁 FINALIZED: {body.path} (Disk: {os.path.getsize(safe_path)})")
-    return {"message": "Success", "disk_size": os.path.getsize(safe_path)}
+    return {"message": "Success", "disk_size": os.path.getsize(safe_path), "hash": actual_hash}
 
 @app.post("/api/v1/download")
 def download_file(body: FileRequest, current_user = Depends(get_current_user)):
