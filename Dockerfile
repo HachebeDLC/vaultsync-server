@@ -11,11 +11,13 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py .
+# Copy the modular app code
+COPY app/ ./app/
 
 # Create storage directory
 RUN mkdir -p /app/storage
 
 EXPOSE 8000
 
-CMD ["python", "main.py"]
+# Run with uvicorn pointing to the modular app entry point
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
