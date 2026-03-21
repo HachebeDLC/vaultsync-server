@@ -246,6 +246,7 @@ async def finalize_upload(body: FinalizeRequest, current_user = Depends(get_curr
             block_hashes = json.loads(metadata['blocks'])
             
         # If it's a completely new file or we don't have blocks, calculate the hard way
+        # Note: We discard the server-calculated hash here to preserve client-side double-hash parity.
         if not block_hashes:
             _, block_hashes = await asyncio.to_thread(calculate_file_hash_and_blocks, safe_path)
             
