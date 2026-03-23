@@ -17,8 +17,19 @@ DB_USER = os.environ.get("DB_USER", "vaultsync")
 DB_PASS = os.environ.get("DB_PASS", "vaultsync_password")
 
 # --- Block Protocol ---
-BLOCK_SIZE = 1024 * 1024  # 1MB Plaintext
-OVERHEAD = 7 + 16 + 16    # Magic (7) + IV (16) + Padding (16)
+SMALL_BLOCK_SIZE = 256 * 1024     # 256KB Plaintext
+LARGE_BLOCK_SIZE = 1024 * 1024    # 1MB Plaintext
+BLOCK_THRESHOLD = 10 * 1024 * 1024 # 10MB Threshold
+OVERHEAD = 7 + 16 + 16            # Magic (7) + IV (16) + Padding (16)
+
+def get_block_size(file_size: int) -> int:
+    return LARGE_BLOCK_SIZE if file_size >= BLOCK_THRESHOLD else SMALL_BLOCK_SIZE
+
+def get_encrypted_block_size(file_size: int) -> int:
+    return get_block_size(file_size) + OVERHEAD
+
+# Backwards compatibility / defaults
+BLOCK_SIZE = LARGE_BLOCK_SIZE
 ENCRYPTED_BLOCK_SIZE = BLOCK_SIZE + OVERHEAD
 
 # --- CORS ---

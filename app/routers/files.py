@@ -8,7 +8,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
 
-from ..config import STORAGE_DIR, ENCRYPTED_BLOCK_SIZE
+from ..config import STORAGE_DIR, get_encrypted_block_size
 from ..database import get_db
 from ..models import FileRequest, RestoreRequest, BlockCheckRequest, BlockDownloadRequest, FinalizeRequest
 from ..dependencies import get_current_user
@@ -149,10 +149,16 @@ async def download_blocks(body: BlockDownloadRequest, current_user = Depends(get
         if current_group:
             groups.append(current_group)
 
+        with get_db() as conn:
+            metadata = crud.get_file_metadata(conn, current_user['id'], body.path)
+            file_size = metadata['size'] if metadata else os.path.getsize(safe_path)
+            
+        enc_block_size = get_encrypted_block_size(file_size)
+
         async with aiofiles.open(safe_path, "rb") as f:
             for group in groups:
-                start_offset = group[0] * ENCRYPTED_BLOCK_SIZE
-                read_size = len(group) * ENCRYPTED_BLOCK_SIZE
+                start_offset = group[0] * enc_block_size
+                read_size = len(group) * enc_block_size
                 
                 await f.seek(start_offset)
                 
@@ -210,11 +216,15 @@ async def upload_fragment(request: Request, background_tasks: BackgroundTasks, c
             
     # For smart delta hashing, if the upload matches a block size, we update the block hash.
     # If it's a full stream, we'll just fall back to full file hashing in finalize.
-    if bytes_written <= ENCRYPTED_BLOCK_SIZE and bytes_written > 0:
-        block_idx = offset // ENCRYPTED_BLOCK_SIZE
+    with get_db() as conn:
+        metadata = crud.get_file_metadata(conn, user_id, path)
+        file_size = metadata['size'] if metadata else os.path.getsize(safe_path)
+        
+    enc_block_size = get_encrypted_block_size(file_size)
+    if bytes_written <= enc_block_size and bytes_written > 0:
+        block_idx = offset // enc_block_size
         block_hash = hasher.hexdigest()
         with get_db() as conn:
-            metadata = crud.get_file_metadata(conn, user_id, path)
             if metadata and metadata.get('blocks'):
                 blocks = json.loads(metadata['blocks'])
                 if block_idx < len(blocks):
