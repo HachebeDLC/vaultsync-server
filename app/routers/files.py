@@ -248,7 +248,7 @@ async def finalize_upload(body: FinalizeRequest, current_user = Depends(get_curr
         # If it's a completely new file or we don't have blocks, calculate the hard way
         # Note: We discard the server-calculated hash here to preserve client-side double-hash parity.
         if not block_hashes:
-            _, block_hashes = await asyncio.to_thread(calculate_file_hash_and_blocks, safe_path)
+            _, block_hashes = await calculate_file_hash_and_blocks(safe_path)
             
         crud.upsert_file_metadata(
             conn, user_id, body.path, actual_hash, 

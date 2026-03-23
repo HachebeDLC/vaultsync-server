@@ -1,17 +1,18 @@
 import os
 import hashlib
+import aiofiles
 from typing import List
 from .config import ENCRYPTED_BLOCK_SIZE, STORAGE_DIR
 
-def calculate_file_hash_and_blocks(file_path: str) -> tuple[str, List[str]]:
+async def calculate_file_hash_and_blocks(file_path: str) -> tuple[str, List[str]]:
     """Single-pass: calculates the full SHA-256 hash and 1MB block hashes."""
     full_sha256 = hashlib.sha256()
     block_hashes = []
     if not os.path.exists(file_path):
         return "", []
-    with open(file_path, "rb") as file:
+    async with aiofiles.open(file_path, "rb") as file:
         while True:
-            chunk = file.read(ENCRYPTED_BLOCK_SIZE)
+            chunk = await file.read(ENCRYPTED_BLOCK_SIZE)
             if not chunk:
                 break
             full_sha256.update(chunk)
