@@ -11,7 +11,9 @@ logger = logging.getLogger("VaultSync")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 # Priority 3: Cache user records to reduce DB pressure
+from threading import Lock
 user_cache = TTLCache(maxsize=100, ttl=300)
+_user_cache_lock = Lock()
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
     """Validates the JWT token and returns the current user from the database."""
@@ -22,8 +24,9 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
             raise HTTPException(status_code=401, detail="Invalid token: missing subject")
         
         # Check cache first
-        if user_id in user_cache:
-            return user_cache[user_id]
+        with _user_cache_lock:
+            if user_id in user_cache:
+                return user_cache[user_id]
             
         with get_db() as conn:
             cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -33,7 +36,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         if user is None:
             raise HTTPException(status_code=401, detail="User not found")
             
-        user_cache[user_id] = user
+        with _user_cache_lock:
+            user_cache[user_id] = user
         return user
         
     except JWTError:

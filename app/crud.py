@@ -2,7 +2,9 @@ import time
 from psycopg2.extras import RealDictCursor
 from cachetools import TTLCache
 
+from threading import Lock
 file_metadata_cache = TTLCache(maxsize=10000, ttl=300)
+_cache_lock = Lock()
 
 def get_user_by_email(conn, email: str):
     cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -48,8 +50,9 @@ def list_user_files(conn, user_id: int, prefix: str = None):
 
 def get_file_metadata(conn, user_id: int, path: str):
     cache_key = f"{user_id}:{path}"
-    if cache_key in file_metadata_cache:
-        return file_metadata_cache[cache_key]
+    with _cache_lock:
+        if cache_key in file_metadata_cache:
+            return file_metadata_cache[cache_key]
 
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute(
@@ -58,11 +61,13 @@ def get_file_metadata(conn, user_id: int, path: str):
     )
     result = cursor.fetchone()
     if result:
-        file_metadata_cache[cache_key] = result
+        with _cache_lock:
+            file_metadata_cache[cache_key] = result
     return result
 
 def upsert_file_metadata(conn, user_id: int, path: str, hash: str, size: int, updated_at: int, device_name: str, blocks_json: str):
-    file_metadata_cache.pop(f"{user_id}:{path}", None)
+    with _cache_lock:
+        file_metadata_cache.pop(f"{user_id}:{path}", None)
     cursor = conn.cursor()
     cursor.execute(
         '''INSERT INTO files (user_id, path, hash, size, updated_at, device_name, blocks) 
@@ -74,9 +79,20 @@ def upsert_file_metadata(conn, user_id: int, path: str, hash: str, size: int, up
     )
 
 def update_file_sync(conn, user_id: int, path: str, hash: str, size: int, updated_at: int, blocks_json: str):
-    file_metadata_cache.pop(f"{user_id}:{path}", None)
+    with _cache_lock:
+        file_metadata_cache.pop(f"{user_id}:{path}", None)
     cursor = conn.cursor()
     cursor.execute(
         "UPDATE files SET hash=%s, size=%s, updated_at=%s, blocks=%s WHERE user_id=%s AND path=%s", 
         (hash, size, updated_at, blocks_json, user_id, path)
+    )
+
+
+def delete_file_metadata(conn, user_id: int, path: str):
+    with _cache_lock:
+        file_metadata_cache.pop(f"{user_id}:{path}", None)
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM files WHERE user_id = %s AND path = %s", 
+        (user_id, path)
     )
