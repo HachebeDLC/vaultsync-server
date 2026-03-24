@@ -34,7 +34,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(files.router)
 app.include_router(recovery.router)
-app.include_router(events.router)
+app.include_router(events.router, prefix="/api/v1")
 
 @app.on_event("startup")
 def startup_event():

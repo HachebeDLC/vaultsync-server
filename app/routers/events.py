@@ -30,8 +30,30 @@ async def sse_events(
         }
     )
 
+@router.get("/events/test")
+async def send_test_notification_get(
+    message: str = Query("Test Notification"),
+    target_device: Optional[str] = Query(None),
+    current_user = Depends(get_current_user)
+):
+    """
+    Simple GET endpoint to trigger a test notification.
+    Example: /api/v1/events/test?message=Hello&target_device=SteamDeck
+    """
+    payload = {
+        "message": message,
+        "type": "test_notification"
+    }
+    await event_notifier.broadcast_to_user(
+        current_user['id'], 
+        payload, 
+        event="test_event",
+        target_device=target_device
+    )
+    return {"message": f"Notification '{message}' queued for user {current_user['id']}"}
+
 @router.post("/events/test")
-async def send_test_notification(
+async def send_test_notification_post(
     body: TestEventRequest,
     current_user = Depends(get_current_user)
 ):
