@@ -1,4 +1,5 @@
 import logging
+import time
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
@@ -6,28 +7,41 @@ from .config import DB_HOST, DB_NAME, DB_USER, DB_PASS
 
 logger = logging.getLogger("VaultSync")
 
-try:
-    db_pool = pool.ThreadedConnectionPool(
-        5, 20, 
-        host=DB_HOST, 
-        database=DB_NAME, 
-        user=DB_USER, 
-        password=DB_PASS
-    )
-    logger.info("📡 Database connection pool initialized")
-except Exception as e:
-    logger.error(f"❌ Could not initialize DB pool: {e}")
-    db_pool = None
+_db_pool = None
+
+def get_pool():
+    global _db_pool
+    if _db_pool is not None:
+        return _db_pool
+        
+    retries = 5
+    while retries > 0:
+        try:
+            _db_pool = pool.ThreadedConnectionPool(
+                5, 20, 
+                host=DB_HOST, 
+                database=DB_NAME, 
+                user=DB_USER, 
+                password=DB_PASS
+            )
+            logger.info("✅ Database connection pool initialized")
+            return _db_pool
+        except Exception as e:
+            retries -= 1
+            logger.warning(f"⚠️ Could not initialize DB pool (Retries left: {retries}): {e}")
+            if retries == 0:
+                logger.error("❌ Database pool initialization failed after all retries.")
+                raise e
+            time.sleep(2)
 
 @contextmanager
 def get_db():
-    if db_pool is None:
-        raise Exception("Database pool not initialized")
-    conn = db_pool.getconn()
+    pool_obj = get_pool()
+    conn = pool_obj.getconn()
     try:
         yield conn
     finally:
-        db_pool.putconn(conn)
+        pool_obj.putconn(conn)
 
 def init_db():
     """Initializes the database schema with migration guards."""

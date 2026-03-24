@@ -7,7 +7,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from .config import CORS_ORIGINS
-from .database import init_db, db_pool
+from .database import init_db, get_pool
 from .routers import auth, files, recovery, events
 from .limiter import limiter
 
@@ -47,8 +47,9 @@ def startup_event():
 
 @app.on_event("shutdown")
 def shutdown_db_pool():
-    if db_pool:
-        db_pool.closeall()
+    pool = get_pool()
+    if pool:
+        pool.closeall()
         logger.info("📡 Database connection pool closed")
 
 @app.get("/")
@@ -56,7 +57,7 @@ def health_check():
     return {
         "status": "online", 
         "version": "VaultSync-v1.2.1-Modular",
-        "database": "connected" if db_pool else "disconnected"
+        "database": "connected" if get_pool() else "disconnected"
     }
 
 if __name__ == "__main__":
