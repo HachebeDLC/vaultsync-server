@@ -274,7 +274,7 @@ async def finalize_upload(body: FinalizeRequest, current_user = Depends(get_curr
     system_id = body.path.split('/')[0] if '/' in body.path else 'unknown'
 
     # Broadcast event to all listening clients
-    asyncio.create_task(event_notifier.broadcast({
+    asyncio.create_task(event_notifier.broadcast_to_user(user_id, {
         "path": body.path,
         "system_id": system_id,
         "size": size,
