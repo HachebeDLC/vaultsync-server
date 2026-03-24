@@ -206,7 +206,7 @@ async def upload_fragment(request: Request, background_tasks: BackgroundTasks, c
     if not os.path.exists(safe_path):
         try:
             open(safe_path, "a").close()
-        except Exception:
+        except OSError:
             pass
             
     async with aiofiles.open(safe_path, "r+b") as f:
