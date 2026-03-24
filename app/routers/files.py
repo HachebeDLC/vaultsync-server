@@ -8,7 +8,9 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
 
-from ..config import STORAGE_DIR, get_encrypted_block_size
+from ..config import STORAGE_DIR
+from ..services.event_notifier import event_notifier
+from ..config import get_encrypted_block_size
 from ..database import get_db
 from ..models import FileRequest, RestoreRequest, BlockCheckRequest, BlockDownloadRequest, FinalizeRequest
 from ..dependencies import get_current_user
@@ -260,12 +262,27 @@ async def finalize_upload(body: FinalizeRequest, current_user = Depends(get_curr
         if not block_hashes:
             _, block_hashes = await calculate_file_hash_and_blocks(safe_path)
             
+        size = body.size or os.path.getsize(safe_path)
         crud.upsert_file_metadata(
             conn, user_id, body.path, actual_hash, 
-            body.size or os.path.getsize(safe_path), body.updated_at, 
+            size, body.updated_at, 
             body.device_name, json.dumps(block_hashes)
         )
         conn.commit()
+        
+    # Extract system_id directly from the path structure (e.g. ps2/memcards/mcd001.ps2 -> ps2)
+    system_id = body.path.split('/')[0] if '/' in body.path else 'unknown'
+
+    # Broadcast event to all listening clients
+    asyncio.create_task(event_notifier.broadcast({
+        "path": body.path,
+        "system_id": system_id,
+        "size": size,
+        "updated_at": body.updated_at,
+        "hash": actual_hash,
+        "origin_device": body.device_name
+    }))
+    
     return {"message": "Success", "hash": actual_hash}
 
 @router.delete("/files")

@@ -8,7 +8,7 @@ from slowapi.errors import RateLimitExceeded
 
 from .config import CORS_ORIGINS
 from .database import init_db, db_pool
-from .routers import auth, files, recovery
+from .routers import auth, files, recovery, events
 from .limiter import limiter
 
 # --- Logging ---
@@ -34,6 +34,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(files.router)
 app.include_router(recovery.router)
+app.include_router(events.router)
 
 @app.on_event("startup")
 def startup_event():
