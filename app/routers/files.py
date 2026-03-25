@@ -40,50 +40,62 @@ def list_versions(path: str, current_user = Depends(get_current_user)):
     return {"path": path, "versions": versions}
 
 @router.post("/versions/restore")
-def restore_version(body: RestoreRequest, current_user = Depends(get_current_user)):
+async def restore_version(body: RestoreRequest, current_user = Depends(get_current_user)):
     """
     Restores a specific version of a file. The current version is backed up before restoration.
     """
     user_id = current_user['id']
     if not is_safe_path(user_id, body.path):
         raise HTTPException(status_code=403, detail="Forbidden")
-    
-    try:
-        # Create a version of the current file before restoring
-        with get_db() as conn:
-            metadata = crud.get_file_metadata(conn, user_id, body.path)
-            if metadata:
-                version_manager.create_version(user_id, body.path, metadata['device_name'])
-        
-        # Get the target version info
-        versions = version_manager.list_versions(user_id, body.path)
-        if body.version <= 0 or body.version > len(versions):
-            raise HTTPException(status_code=404, detail="Version not found")
-            
-        v_info = versions[body.version - 1]
-        v_path = os.path.join(version_manager.get_version_dir(user_id), v_info['filename'])
-        
-        # Overwrite the current file
-        safe_path = os.path.abspath(os.path.join(STORAGE_DIR, str(user_id), body.path.lstrip("/\\")))
-        os.makedirs(os.path.dirname(safe_path), exist_ok=True)
-        import shutil
-        shutil.copy2(v_path, safe_path)
-        
-        # Update metadata in DB
-        with get_db() as conn:
-            actual_hash, block_hashes = calculate_file_hash_and_blocks(safe_path)
-            crud.upsert_file_metadata(
-                conn, user_id, body.path, actual_hash, 
-                os.path.getsize(safe_path), int(os.path.getmtime(safe_path) * 1000), 
-                "Restored", json.dumps(block_hashes)
-            )
-            conn.commit()
-            
-        return {"message": "Restored successfully"}
-    except Exception as e:
-        logger.error(f"Restore failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
+    try:
+        def perform_restore():
+            # Create a version of the current file before restoring
+            with get_db() as conn:
+                metadata = crud.get_file_metadata(conn, user_id, body.path)
+                if metadata:
+                    version_manager.create_version(user_id, body.path, metadata['device_name'])
+
+            # Get the target version info
+            versions = version_manager.list_versions(user_id, body.path)
+            # Find the version matching version_id
+            v_info = next((v for v in versions if v['version_id'] == body.version_id), None)
+            if not v_info:
+                raise HTTPException(status_code=404, detail="Version not found")
+
+            v_path = os.path.join(version_manager.get_version_dir(user_id), v_info['version_id'])
+
+            # Overwrite the current file
+            safe_path = os.path.abspath(os.path.join(STORAGE_DIR, str(user_id), body.path.lstrip("/\\")))
+            os.makedirs(os.path.dirname(safe_path), exist_ok=True)
+            import shutil
+            shutil.copy2(v_path, safe_path)
+            return safe_path
+
+        safe_path = await asyncio.to_thread(perform_restore)
+
+        # Update metadata in DB
+        actual_hash, block_hashes = await calculate_file_hash_and_blocks(safe_path)
+
+        def update_metadata():
+            with get_db() as conn:
+                crud.upsert_file_metadata(
+                    conn, user_id, body.path, actual_hash,
+                    os.path.getsize(safe_path), int(os.path.getmtime(safe_path) * 1000),
+                    "Restored", json.dumps(block_hashes)
+                )
+                conn.commit()
+
+        await asyncio.to_thread(update_metadata)
+
+        return {"message": "Restored successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ RESTORE FAILED for {body.path}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Restore operation failed due to a server error")
 @router.post("/download")
 def download_file(body: FileRequest, current_user = Depends(get_current_user)):
     """
