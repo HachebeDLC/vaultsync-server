@@ -131,7 +131,15 @@ def check_blocks(body: BlockCheckRequest, current_user = Depends(get_current_use
         raise HTTPException(status_code=403)
     with get_db() as conn:
         metadata = crud.get_file_metadata(conn, current_user['id'], body.path)
-    server_blocks = json.loads(metadata['blocks']) if metadata and metadata['blocks'] else []
+    
+    server_blocks = []
+    if metadata and metadata.get('blocks'):
+        try:
+            import json
+            server_blocks = json.loads(metadata['blocks'])
+        except Exception:
+            server_blocks = []
+            
     return {"missing": [i for i, h in enumerate(body.blocks) if i >= len(server_blocks) or server_blocks[i] != h]}
 
 @router.post("/blocks/download")
