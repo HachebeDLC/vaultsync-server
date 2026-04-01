@@ -108,3 +108,32 @@ def delete_file_metadata(conn, user_id: int, path: str):
         "DELETE FROM files WHERE user_id = %s AND path = %s", 
         (user_id, path)
     )
+
+def create_refresh_token(conn, user_id: int, token: str, expires_at: int):
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO refresh_tokens (user_id, token, expires_at, created_at) VALUES (%s, %s, %s, %s)",
+        (user_id, token, expires_at, int(time.time()))
+    )
+
+def get_refresh_token(conn, token: str):
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute(
+        "SELECT * FROM refresh_tokens WHERE token = %s AND revoked = FALSE",
+        (token,)
+    )
+    return cursor.fetchone()
+
+def revoke_refresh_token(conn, token: str):
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE refresh_tokens SET revoked = TRUE WHERE token = %s",
+        (token,)
+    )
+
+def revoke_all_user_refresh_tokens(conn, user_id: int):
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = %s",
+        (user_id,)
+    )

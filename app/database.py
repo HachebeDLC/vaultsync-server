@@ -93,6 +93,20 @@ def init_db():
             ''')
             # Priority 8: Add index for path-prefix queries
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_files_path ON files (path)')
+
+            # Refresh Tokens table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS refresh_tokens (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    token TEXT UNIQUE NOT NULL,
+                    expires_at BIGINT NOT NULL,
+                    created_at BIGINT NOT NULL,
+                    revoked BOOLEAN DEFAULT FALSE
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_refresh_token ON refresh_tokens (token)')
+            
             conn.commit()
             logger.info("✅ Database schema is up to date")
     except Exception as e:

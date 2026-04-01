@@ -38,3 +38,6 @@ class RecoverySetupRequest(BaseModel):
 
 class RecoveryPayloadRequest(BaseModel):
     email: str
+
+class TokenRefreshRequest(BaseModel):
+    refresh_token: str
