@@ -21,11 +21,16 @@ class EventNotifier:
         
         try:
             while True:
-                data = await q.get()
-                # data is expected to be a dict with {"event": str, "payload": dict}
-                event_type = data.get("event", "message")
-                payload = data.get("payload", {})
-                yield f"event: {event_type}\ndata: {json.dumps(payload)}\n\n"
+                try:
+                    # Wait for data with a timeout to send heartbeats
+                    data = await asyncio.wait_for(q.get(), timeout=30.0)
+                    # data is expected to be a dict with {"event": str, "payload": dict}
+                    event_type = data.get("event", "message")
+                    payload = data.get("payload", {})
+                    yield f"event: {event_type}\ndata: {json.dumps(payload)}\n\n"
+                except asyncio.TimeoutError:
+                    # Send a heartbeat comment to keep the connection alive
+                    yield ": heartbeat\n\n"
         except asyncio.CancelledError:
             pass
         finally:
