@@ -54,7 +54,14 @@ def list_user_files(conn, user_id: int, prefix: str = None, limit: int = 200, af
     )
     params.append(limit + 1)  # fetch one extra to determine if there's a next page
     cursor.execute(query, params)
-    return cursor.fetchall()
+    rows = cursor.fetchall()
+    
+    next_cursor = None
+    if len(rows) > limit:
+        next_cursor = rows[limit - 1]['path']
+        rows = rows[:limit]
+        
+    return rows, next_cursor
 
 def get_file_metadata(conn, user_id: int, path: str):
     cache_key = f"{user_id}:{path}"

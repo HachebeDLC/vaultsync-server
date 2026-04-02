@@ -309,3 +309,12 @@ async def restore_version(body: RestoreRequest, current_user = Depends(get_curre
         }))
         
     return {"message": "Restored"}
+
+@router.get("/conflicts")
+def list_conflicts(current_user = Depends(get_current_user)):
+    """
+    Lists all active sync conflicts for the user.
+    """
+    # Stub: Conflicts are currently handled via the .sync-conflict- suffix 
+    # in the file list. This endpoint can be used for a centralized UI later.
+    return {"conflicts": []}
