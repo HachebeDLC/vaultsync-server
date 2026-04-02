@@ -6,6 +6,8 @@ bcrypt==3.2.2
 python-jose[cryptography]
 cryptography
 psycopg2-binary
+asyncpg
+redis
 slowapi
 aiofiles
 cachetools

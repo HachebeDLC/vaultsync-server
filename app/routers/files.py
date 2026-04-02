@@ -7,9 +7,8 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
 
-from ..config import STORAGE_DIR
+from ..config import STORAGE_DIR, get_block_size, OVERHEAD, get_encrypted_block_size
 from ..services.event_notifier import event_notifier
-from ..config import get_encrypted_block_size
 from ..database import get_db
 from ..models import FileRequest, RestoreRequest, BlockCheckRequest, BlockDownloadRequest, FinalizeRequest
 from ..dependencies import get_current_user
@@ -28,80 +27,9 @@ def list_files(prefix: Optional[str] = None, limit: int = 200, after: Optional[s
     """
     limit = min(limit, 1000)
     with get_db() as conn:
-        rows = crud.list_user_files(conn, current_user['id'], prefix=prefix, limit=limit, after=after)
+        files, next_cursor = crud.list_user_files(conn, current_user['id'], prefix=prefix, limit=limit, after=after)
+        return {"files": files, "next_cursor": next_cursor}
 
-    has_more = len(rows) > limit
-    files = rows[:limit]
-    next_cursor = files[-1]['path'] if has_more else None
-    return {"files": files, "next_cursor": next_cursor}
-
-@router.get("/versions")
-def list_versions(path: str, current_user = Depends(get_current_user)):
-    """
-    Lists all available historical versions for a specific file path.
-    """
-    if not is_safe_path(current_user['id'], path):
-        raise HTTPException(status_code=403, detail="Forbidden: Path traversal detected")
-    versions = version_manager.list_versions(current_user['id'], path)
-    return {"path": path, "versions": versions}
-
-@router.post("/versions/restore")
-async def restore_version(body: RestoreRequest, current_user = Depends(get_current_user)):
-    """
-    Restores a specific version of a file. The current version is backed up before restoration.
-    """
-    user_id = current_user['id']
-    if not is_safe_path(user_id, body.path):
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    try:
-        def perform_restore():
-            # Create a version of the current file before restoring
-            with get_db() as conn:
-                metadata = crud.get_file_metadata(conn, user_id, body.path)
-                if metadata:
-                    version_manager.create_version(user_id, body.path, metadata['device_name'])
-
-            # Get the target version info
-            versions = version_manager.list_versions(user_id, body.path)
-            # Find the version matching version_id
-            v_info = next((v for v in versions if v['version_id'] == body.version_id), None)
-            if not v_info:
-                raise HTTPException(status_code=404, detail="Version not found")
-
-            v_path = os.path.join(version_manager.get_version_dir(user_id), v_info['version_id'])
-
-            # Overwrite the current file
-            safe_path = os.path.abspath(os.path.join(STORAGE_DIR, str(user_id), body.path.lstrip("/\\")))
-            os.makedirs(os.path.dirname(safe_path), exist_ok=True)
-            import shutil
-            shutil.copy2(v_path, safe_path)
-            return safe_path
-
-        safe_path = await asyncio.to_thread(perform_restore)
-
-        # Update metadata in DB
-        actual_hash, block_hashes = await calculate_file_hash_and_blocks(safe_path)
-
-        def update_metadata():
-            with get_db() as conn:
-                crud.upsert_file_metadata(
-                    conn, user_id, body.path, actual_hash,
-                    os.path.getsize(safe_path), int(os.path.getmtime(safe_path) * 1000),
-                    "Restored", block_hashes
-                )
-                conn.commit()
-
-        await asyncio.to_thread(update_metadata)
-
-        return {"message": "Restored successfully"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ RESTORE FAILED for {body.path}: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail="Restore operation failed due to a server error")
 @router.post("/download")
 def download_file(body: FileRequest, current_user = Depends(get_current_user)):
     """
@@ -124,38 +52,46 @@ def get_file_manifest(path: str, current_user = Depends(get_current_user)):
         raise HTTPException(status_code=403)
     with get_db() as conn:
         metadata = crud.get_file_metadata(conn, current_user['id'], path)
-    if not metadata:
-        raise HTTPException(status_code=404)
-    return {"path": path, "blocks": metadata['blocks'] or []}
+        if not metadata:
+            raise HTTPException(status_code=404)
+        return {"path": path, "blocks": metadata.get('blocks', [])}
 
 @router.post("/blocks/check")
-def check_blocks(body: BlockCheckRequest, current_user = Depends(get_current_user)):
+async def check_blocks(body: BlockCheckRequest, current_user = Depends(get_current_user)):
     """
-    Compares local block hashes with server block hashes and returns indices of missing/modified blocks.
+    Given a list of block hashes, returns the indices that are missing or different on the server.
     """
-    if not is_safe_path(current_user['id'], body.path):
-        raise HTTPException(status_code=403)
+    user_id = current_user['id']
     with get_db() as conn:
-        metadata = crud.get_file_metadata(conn, current_user['id'], body.path)
-    
-    server_blocks = metadata['blocks'] if metadata and metadata.get('blocks') else []
-    return {"missing": [i for i, h in enumerate(body.blocks) if i >= len(server_blocks) or server_blocks[i] != h]}
+        metadata = crud.get_file_metadata(conn, user_id, body.path)
+        if not metadata:
+            # If file doesn't exist, all blocks are missing
+            return {"missing": list(range(len(body.blocks)))}
+        
+        server_blocks = metadata.get('blocks', [])
+        missing = []
+        for i, h in enumerate(body.blocks):
+            if i >= len(server_blocks) or server_blocks[i] != h:
+                missing.append(i)
+        return {"missing": missing}
 
 @router.post("/blocks/download")
 async def download_blocks(body: BlockDownloadRequest, current_user = Depends(get_current_user)):
     """
-    Streams specific blocks of a file based on provided indices. Merges contiguous block reads for performance.
+    Downloads specific encrypted blocks for a file.
+    Used for resuming or delta-downloading.
     """
     if not is_safe_path(current_user['id'], body.path):
         raise HTTPException(status_code=403)
+        
     safe_path = os.path.abspath(os.path.join(STORAGE_DIR, str(current_user['id']), body.path.lstrip("/\\")))
     if not os.path.exists(safe_path):
         raise HTTPException(status_code=404)
 
     def _get_file_size():
         with get_db() as conn:
-            metadata = crud.get_file_metadata(conn, current_user['id'], body.path)
-            return metadata['size'] if metadata else os.path.getsize(safe_path)
+            m = crud.get_file_metadata(conn, current_user['id'], body.path)
+            return m['size'] if m else os.path.getsize(safe_path)
 
     file_size = await asyncio.to_thread(_get_file_size)
     enc_block_size = get_encrypted_block_size(file_size)
@@ -167,6 +103,8 @@ async def download_blocks(body: BlockDownloadRequest, current_user = Depends(get
         # Group contiguous indices
         sorted_indices = sorted(body.indices)
         groups = []
+        if not sorted_indices: return
+        
         current_group = [sorted_indices[0]]
 
         for i in range(1, len(sorted_indices)):
@@ -208,27 +146,18 @@ async def upload_fragment(request: Request, background_tasks: BackgroundTasks, c
     offset = int(headers.get("x-vaultsync-offset") or 0)
     if not path or not is_safe_path(current_user['id'], path):
         raise HTTPException(status_code=403)
-    
+        
     user_id = current_user['id']
     safe_path = os.path.abspath(os.path.join(STORAGE_DIR, str(user_id), path.lstrip("/\\")))
     os.makedirs(os.path.dirname(safe_path), exist_ok=True)
-    
-    if offset == 0 and os.path.exists(safe_path):
-        def _get_meta_for_version():
-            with get_db() as conn:
-                return crud.get_file_metadata(conn, user_id, path)
-        metadata = await asyncio.to_thread(_get_meta_for_version)
-        if metadata:
-            background_tasks.add_task(version_manager.create_version, user_id, path, metadata['device_name'])
-                
-    hasher = hashlib.sha256()
+
     bytes_written = 0
+    hasher = hashlib.sha256()
     
-    # Safely create the file without truncating if it doesn't exist to prevent concurrent upload races
+    # Pre-create or open existing file
     if not os.path.exists(safe_path):
-        try:
-            open(safe_path, "a").close()
-        except OSError:
+        # Using synchronous open for initial creation is fine as it's a one-off
+        with open(safe_path, "wb") as f:
             pass
             
     async with aiofiles.open(safe_path, "r+b") as f:
@@ -238,32 +167,7 @@ async def upload_fragment(request: Request, background_tasks: BackgroundTasks, c
             hasher.update(chunk)
             bytes_written += len(chunk)
             
-    # For smart delta hashing, if the upload matches a block size, we update the block hash.
-    # If it's a full stream, we'll just fall back to full file hashing in finalize.
-    def _get_metadata():
-        with get_db() as conn:
-            return crud.get_file_metadata(conn, user_id, path)
-
-    metadata = await asyncio.to_thread(_get_metadata)
-    file_size = metadata['size'] if metadata else os.path.getsize(safe_path)
-
-    enc_block_size = get_encrypted_block_size(file_size)
-    if bytes_written <= enc_block_size and bytes_written > 0:
-        block_idx = offset // enc_block_size
-        block_hash = hasher.hexdigest()
-
-        def _update_block():
-            with get_db() as conn:
-                if metadata and metadata.get('blocks'):
-                    blocks = list(metadata['blocks'])
-                    if block_idx < len(blocks):
-                        blocks[block_idx] = block_hash
-                        crud.update_file_sync(conn, user_id, path, metadata['hash'], metadata['size'], metadata['updated_at'], blocks)
-                        conn.commit()
-
-        await asyncio.to_thread(_update_block)
-
-    return {"message": "OK"}
+    return {"message": "Fragment uploaded", "bytes": bytes_written, "sha256": hasher.hexdigest()}
 
 @router.post("/upload/finalize")
 async def finalize_upload(body: FinalizeRequest, current_user = Depends(get_current_user)):
@@ -290,11 +194,27 @@ async def finalize_upload(body: FinalizeRequest, current_user = Depends(get_curr
         block_hashes = metadata['blocks']
 
     # If it's a completely new file or we don't have blocks, calculate the hard way.
-    # Note: We discard the server-calculated hash here to preserve client-side double-hash parity.
     if not block_hashes:
         _, block_hashes = await calculate_file_hash_and_blocks(safe_path)
 
     size = body.size or os.path.getsize(safe_path)
+
+    # --- CRITICAL FIX: TRUNCATE PHYSICAL FILE ---
+    # Prevents "ghost data" if the file has shrunk.
+    if size == 0:
+        expected_enc_size = 0
+    else:
+        bs = get_block_size(size)
+        num_blocks = (size + bs - 1) // bs
+        expected_enc_size = size + (num_blocks * OVERHEAD)
+    
+    real_fs_size = os.path.getsize(safe_path)
+    if real_fs_size > expected_enc_size:
+        logger.info(f"✂️ TRUNCATING: {body.path} from {real_fs_size} to {expected_enc_size}")
+        # Note: 'a' mode allows truncation while keeping the file open safely
+        with open(safe_path, "a") as f:
+            f.truncate(expected_enc_size)
+    # --------------------------------------------
 
     def _upsert():
         with get_db() as conn:
@@ -307,7 +227,7 @@ async def finalize_upload(body: FinalizeRequest, current_user = Depends(get_curr
 
     await asyncio.to_thread(_upsert)
         
-    # Extract system_id directly from the path structure (e.g. ps2/memcards/mcd001.ps2 -> ps2)
+    # Extract system_id directly from the path structure
     system_id = body.path.split('/')[0] if '/' in body.path else 'unknown'
 
     # Broadcast event to all listening clients
@@ -320,7 +240,7 @@ async def finalize_upload(body: FinalizeRequest, current_user = Depends(get_curr
         "origin_device": body.device_name
     }))
     
-    return {"message": "Success", "hash": actual_hash}
+    return {"message": "Finalized"}
 
 @router.delete("/files")
 async def delete_file(body: FileRequest, background_tasks: BackgroundTasks, current_user = Depends(get_current_user)):
@@ -348,3 +268,44 @@ async def delete_file(body: FileRequest, background_tasks: BackgroundTasks, curr
         os.remove(safe_path)
         
     return {"message": "Deleted"}
+
+@router.get("/versions")
+def list_versions(path: str, current_user = Depends(get_current_user)):
+    """
+    Lists all available historical versions for a specific file path.
+    """
+    if not is_safe_path(current_user['id'], path):
+        raise HTTPException(status_code=403, detail="Forbidden: Path traversal detected")
+    versions = version_manager.list_versions(current_user['id'], path)
+    return {"path": path, "versions": versions}
+
+@router.post("/versions/restore")
+async def restore_version(body: RestoreRequest, current_user = Depends(get_current_user)):
+    """
+    Restores a specific version of a file.
+    """
+    user_id = current_user['id']
+    if not is_safe_path(user_id, body.path):
+        raise HTTPException(status_code=403)
+    
+    success = await version_manager.restore_version(user_id, body.path, body.version_id)
+    if not success:
+        raise HTTPException(status_code=500, detail="Restore failed")
+        
+    def _get_meta():
+        with get_db() as conn:
+            return crud.get_file_metadata(conn, user_id, body.path)
+    
+    meta = await asyncio.to_thread(_get_meta)
+    if meta:
+        system_id = body.path.split('/')[0] if '/' in body.path else 'unknown'
+        asyncio.create_task(event_notifier.broadcast_to_user(user_id, {
+            "path": body.path,
+            "system_id": system_id,
+            "size": meta['size'],
+            "updated_at": meta['updated_at'],
+            "hash": meta['hash'],
+            "origin_device": "VersionRestore"
+        }))
+        
+    return {"message": "Restored"}

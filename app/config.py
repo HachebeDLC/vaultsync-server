@@ -16,6 +16,10 @@ DB_NAME = os.environ.get("DB_NAME", "vaultsync")
 DB_USER = os.environ.get("DB_USER", "vaultsync")
 DB_PASS = os.environ.get("DB_PASS", "vaultsync_password")
 
+# --- Redis ---
+REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
+
 # --- Block Protocol ---
 SMALL_BLOCK_SIZE = 256 * 1024     # 256KB Plaintext
 LARGE_BLOCK_SIZE = 1024 * 1024    # 1MB Plaintext
