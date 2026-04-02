@@ -1,5 +1,5 @@
 import time
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, Json
 from cachetools import TTLCache
 
 from threading import Lock
@@ -85,26 +85,26 @@ def get_file_metadata(conn, user_id: int, path: str):
             file_metadata_cache[cache_key] = metadata_only
     return result
 
-def upsert_file_metadata(conn, user_id: int, path: str, hash: str, size: int, updated_at: int, device_name: str, blocks_json: str):
+def upsert_file_metadata(conn, user_id: int, path: str, hash: str, size: int, updated_at: int, device_name: str, blocks: list):
     with _cache_lock:
         file_metadata_cache.pop(f"{user_id}:{path}", None)
     cursor = conn.cursor()
     cursor.execute(
-        '''INSERT INTO files (user_id, path, hash, size, updated_at, device_name, blocks) 
-           VALUES (%s, %s, %s, %s, %s, %s, %s) 
-           ON CONFLICT(user_id, path) DO UPDATE SET 
-           hash=EXCLUDED.hash, size=EXCLUDED.size, updated_at=EXCLUDED.updated_at, 
-           device_name=EXCLUDED.device_name, blocks=EXCLUDED.blocks''', 
-        (user_id, path, hash, size, updated_at, device_name, blocks_json)
+        '''INSERT INTO files (user_id, path, hash, size, updated_at, device_name, blocks)
+           VALUES (%s, %s, %s, %s, %s, %s, %s)
+           ON CONFLICT(user_id, path) DO UPDATE SET
+           hash=EXCLUDED.hash, size=EXCLUDED.size, updated_at=EXCLUDED.updated_at,
+           device_name=EXCLUDED.device_name, blocks=EXCLUDED.blocks''',
+        (user_id, path, hash, size, updated_at, device_name, Json(blocks))
     )
 
-def update_file_sync(conn, user_id: int, path: str, hash: str, size: int, updated_at: int, blocks_json: str):
+def update_file_sync(conn, user_id: int, path: str, hash: str, size: int, updated_at: int, blocks: list):
     with _cache_lock:
         file_metadata_cache.pop(f"{user_id}:{path}", None)
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE files SET hash=%s, size=%s, updated_at=%s, blocks=%s WHERE user_id=%s AND path=%s", 
-        (hash, size, updated_at, blocks_json, user_id, path)
+        "UPDATE files SET hash=%s, size=%s, updated_at=%s, blocks=%s WHERE user_id=%s AND path=%s",
+        (hash, size, updated_at, Json(blocks), user_id, path)
     )
 
 

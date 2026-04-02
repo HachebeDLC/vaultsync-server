@@ -85,17 +85,29 @@ def init_db():
             # Files table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS files (
-                    id SERIAL PRIMARY KEY, 
-                    user_id INTEGER REFERENCES users(id), 
-                    path TEXT NOT NULL, 
-                    hash TEXT, 
-                    size BIGINT, 
-                    updated_at BIGINT, 
-                    device_name TEXT, 
-                    blocks TEXT, 
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id),
+                    path TEXT NOT NULL,
+                    hash TEXT,
+                    size BIGINT,
+                    updated_at BIGINT,
+                    device_name TEXT,
+                    blocks JSONB,
                     UNIQUE(user_id, path)
                 )
             ''')
+
+            # Migration: blocks TEXT -> JSONB
+            cursor.execute("SELECT data_type FROM information_schema.columns WHERE table_name='files' AND column_name='blocks'")
+            col = cursor.fetchone()
+            if col and col[0].lower() == 'text':
+                logger.info("Migrating: Converting files.blocks from TEXT to JSONB")
+                cursor.execute("""
+                    ALTER TABLE files
+                    ALTER COLUMN blocks TYPE JSONB
+                    USING CASE WHEN blocks IS NULL OR blocks = '' THEN NULL ELSE blocks::jsonb END
+                """)
+
             # Refresh Tokens table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS refresh_tokens (

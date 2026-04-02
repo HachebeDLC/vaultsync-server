@@ -1,5 +1,4 @@
 import os
-import json
 import logging
 import asyncio
 import aiofiles
@@ -89,7 +88,7 @@ async def restore_version(body: RestoreRequest, current_user = Depends(get_curre
                 crud.upsert_file_metadata(
                     conn, user_id, body.path, actual_hash,
                     os.path.getsize(safe_path), int(os.path.getmtime(safe_path) * 1000),
-                    "Restored", json.dumps(block_hashes)
+                    "Restored", block_hashes
                 )
                 conn.commit()
 
@@ -127,7 +126,7 @@ def get_file_manifest(path: str, current_user = Depends(get_current_user)):
         metadata = crud.get_file_metadata(conn, current_user['id'], path)
     if not metadata:
         raise HTTPException(status_code=404)
-    return {"path": path, "blocks": json.loads(metadata['blocks']) if metadata['blocks'] else []}
+    return {"path": path, "blocks": metadata['blocks'] or []}
 
 @router.post("/blocks/check")
 def check_blocks(body: BlockCheckRequest, current_user = Depends(get_current_user)):
@@ -139,14 +138,7 @@ def check_blocks(body: BlockCheckRequest, current_user = Depends(get_current_use
     with get_db() as conn:
         metadata = crud.get_file_metadata(conn, current_user['id'], body.path)
     
-    server_blocks = []
-    if metadata and metadata.get('blocks'):
-        try:
-            import json
-            server_blocks = json.loads(metadata['blocks'])
-        except Exception:
-            server_blocks = []
-            
+    server_blocks = metadata['blocks'] if metadata and metadata.get('blocks') else []
     return {"missing": [i for i, h in enumerate(body.blocks) if i >= len(server_blocks) or server_blocks[i] != h]}
 
 @router.post("/blocks/download")
@@ -263,10 +255,10 @@ async def upload_fragment(request: Request, background_tasks: BackgroundTasks, c
         def _update_block():
             with get_db() as conn:
                 if metadata and metadata.get('blocks'):
-                    blocks = json.loads(metadata['blocks'])
+                    blocks = list(metadata['blocks'])
                     if block_idx < len(blocks):
                         blocks[block_idx] = block_hash
-                        crud.update_file_sync(conn, user_id, path, metadata['hash'], metadata['size'], metadata['updated_at'], json.dumps(blocks))
+                        crud.update_file_sync(conn, user_id, path, metadata['hash'], metadata['size'], metadata['updated_at'], blocks)
                         conn.commit()
 
         await asyncio.to_thread(_update_block)
@@ -295,7 +287,7 @@ async def finalize_upload(body: FinalizeRequest, current_user = Depends(get_curr
 
     metadata = await asyncio.to_thread(_get_metadata)
     if metadata and metadata.get('blocks'):
-        block_hashes = json.loads(metadata['blocks'])
+        block_hashes = metadata['blocks']
 
     # If it's a completely new file or we don't have blocks, calculate the hard way.
     # Note: We discard the server-calculated hash here to preserve client-side double-hash parity.
@@ -309,7 +301,7 @@ async def finalize_upload(body: FinalizeRequest, current_user = Depends(get_curr
             crud.upsert_file_metadata(
                 conn, user_id, body.path, actual_hash,
                 size, body.updated_at,
-                body.device_name, json.dumps(block_hashes)
+                body.device_name, block_hashes
             )
             conn.commit()
 
