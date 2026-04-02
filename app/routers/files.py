@@ -22,12 +22,19 @@ logger = logging.getLogger("VaultSync")
 router = APIRouter(prefix="/api/v1")
 
 @router.get("/files")
-def list_files(prefix: Optional[str] = None, current_user = Depends(get_current_user)):
+def list_files(prefix: Optional[str] = None, limit: int = 200, after: Optional[str] = None, current_user = Depends(get_current_user)):
     """
-    Returns a list of all files synced by the current user, optionally filtered by path prefix.
+    Returns a paginated list of files synced by the current user, optionally filtered by path prefix.
+    Pass the returned next_cursor as the 'after' param to fetch the next page.
     """
+    limit = min(limit, 1000)
     with get_db() as conn:
-        return {"files": crud.list_user_files(conn, current_user['id'], prefix=prefix)}
+        rows = crud.list_user_files(conn, current_user['id'], prefix=prefix, limit=limit, after=after)
+
+    has_more = len(rows) > limit
+    files = rows[:limit]
+    next_cursor = files[-1]['path'] if has_more else None
+    return {"files": files, "next_cursor": next_cursor}
 
 @router.get("/versions")
 def list_versions(path: str, current_user = Depends(get_current_user)):
@@ -153,15 +160,23 @@ async def download_blocks(body: BlockDownloadRequest, current_user = Depends(get
     if not os.path.exists(safe_path):
         raise HTTPException(status_code=404)
 
+    def _get_file_size():
+        with get_db() as conn:
+            metadata = crud.get_file_metadata(conn, current_user['id'], body.path)
+            return metadata['size'] if metadata else os.path.getsize(safe_path)
+
+    file_size = await asyncio.to_thread(_get_file_size)
+    enc_block_size = get_encrypted_block_size(file_size)
+
     async def iter_blocks():
         if not body.indices:
             return
-            
+
         # Group contiguous indices
         sorted_indices = sorted(body.indices)
         groups = []
         current_group = [sorted_indices[0]]
-        
+
         for i in range(1, len(sorted_indices)):
             if sorted_indices[i] == current_group[-1] + 1:
                 current_group.append(sorted_indices[i])
@@ -170,12 +185,6 @@ async def download_blocks(body: BlockDownloadRequest, current_user = Depends(get
                 current_group = [sorted_indices[i]]
         if current_group:
             groups.append(current_group)
-
-        with get_db() as conn:
-            metadata = crud.get_file_metadata(conn, current_user['id'], body.path)
-            file_size = metadata['size'] if metadata else os.path.getsize(safe_path)
-            
-        enc_block_size = get_encrypted_block_size(file_size)
 
         async with aiofiles.open(safe_path, "rb") as f:
             for group in groups:
@@ -212,12 +221,13 @@ async def upload_fragment(request: Request, background_tasks: BackgroundTasks, c
     safe_path = os.path.abspath(os.path.join(STORAGE_DIR, str(user_id), path.lstrip("/\\")))
     os.makedirs(os.path.dirname(safe_path), exist_ok=True)
     
-    # Priority 4: Move versioning to BackgroundTasks
     if offset == 0 and os.path.exists(safe_path):
-        with get_db() as conn:
-            metadata = crud.get_file_metadata(conn, user_id, path)
-            if metadata:
-                background_tasks.add_task(version_manager.create_version, user_id, path, metadata['device_name'])
+        def _get_meta_for_version():
+            with get_db() as conn:
+                return crud.get_file_metadata(conn, user_id, path)
+        metadata = await asyncio.to_thread(_get_meta_for_version)
+        if metadata:
+            background_tasks.add_task(version_manager.create_version, user_id, path, metadata['device_name'])
                 
     hasher = hashlib.sha256()
     bytes_written = 0
@@ -238,21 +248,28 @@ async def upload_fragment(request: Request, background_tasks: BackgroundTasks, c
             
     # For smart delta hashing, if the upload matches a block size, we update the block hash.
     # If it's a full stream, we'll just fall back to full file hashing in finalize.
-    with get_db() as conn:
-        metadata = crud.get_file_metadata(conn, user_id, path)
-        file_size = metadata['size'] if metadata else os.path.getsize(safe_path)
-        
+    def _get_metadata():
+        with get_db() as conn:
+            return crud.get_file_metadata(conn, user_id, path)
+
+    metadata = await asyncio.to_thread(_get_metadata)
+    file_size = metadata['size'] if metadata else os.path.getsize(safe_path)
+
     enc_block_size = get_encrypted_block_size(file_size)
     if bytes_written <= enc_block_size and bytes_written > 0:
         block_idx = offset // enc_block_size
         block_hash = hasher.hexdigest()
-        with get_db() as conn:
-            if metadata and metadata.get('blocks'):
-                blocks = json.loads(metadata['blocks'])
-                if block_idx < len(blocks):
-                    blocks[block_idx] = block_hash
-                    crud.update_file_sync(conn, user_id, path, metadata['hash'], metadata['size'], metadata['updated_at'], json.dumps(blocks))
-                    conn.commit()
+
+        def _update_block():
+            with get_db() as conn:
+                if metadata and metadata.get('blocks'):
+                    blocks = json.loads(metadata['blocks'])
+                    if block_idx < len(blocks):
+                        blocks[block_idx] = block_hash
+                        crud.update_file_sync(conn, user_id, path, metadata['hash'], metadata['size'], metadata['updated_at'], json.dumps(blocks))
+                        conn.commit()
+
+        await asyncio.to_thread(_update_block)
 
     return {"message": "OK"}
 
@@ -271,24 +288,32 @@ async def finalize_upload(body: FinalizeRequest, current_user = Depends(get_curr
 
     actual_hash = body.hash
     block_hashes = []
-    
-    with get_db() as conn:
-        metadata = crud.get_file_metadata(conn, user_id, body.path)
-        if metadata and metadata.get('blocks'):
-            block_hashes = json.loads(metadata['blocks'])
-            
-        # If it's a completely new file or we don't have blocks, calculate the hard way
-        # Note: We discard the server-calculated hash here to preserve client-side double-hash parity.
-        if not block_hashes:
-            _, block_hashes = await calculate_file_hash_and_blocks(safe_path)
-            
-        size = body.size or os.path.getsize(safe_path)
-        crud.upsert_file_metadata(
-            conn, user_id, body.path, actual_hash, 
-            size, body.updated_at, 
-            body.device_name, json.dumps(block_hashes)
-        )
-        conn.commit()
+
+    def _get_metadata():
+        with get_db() as conn:
+            return crud.get_file_metadata(conn, user_id, body.path)
+
+    metadata = await asyncio.to_thread(_get_metadata)
+    if metadata and metadata.get('blocks'):
+        block_hashes = json.loads(metadata['blocks'])
+
+    # If it's a completely new file or we don't have blocks, calculate the hard way.
+    # Note: We discard the server-calculated hash here to preserve client-side double-hash parity.
+    if not block_hashes:
+        _, block_hashes = await calculate_file_hash_and_blocks(safe_path)
+
+    size = body.size or os.path.getsize(safe_path)
+
+    def _upsert():
+        with get_db() as conn:
+            crud.upsert_file_metadata(
+                conn, user_id, body.path, actual_hash,
+                size, body.updated_at,
+                body.device_name, json.dumps(block_hashes)
+            )
+            conn.commit()
+
+    await asyncio.to_thread(_upsert)
         
     # Extract system_id directly from the path structure (e.g. ps2/memcards/mcd001.ps2 -> ps2)
     system_id = body.path.split('/')[0] if '/' in body.path else 'unknown'
@@ -316,12 +341,15 @@ async def delete_file(body: FileRequest, background_tasks: BackgroundTasks, curr
         
     user_id = current_user['id']
     
-    with get_db() as conn:
-        metadata = crud.get_file_metadata(conn, user_id, path)
-        if metadata:
-            background_tasks.add_task(version_manager.create_version, user_id, path, metadata['device_name'])
-        crud.delete_file_metadata(conn, user_id, path)
-        conn.commit()
+    def _delete_metadata():
+        with get_db() as conn:
+            metadata = crud.get_file_metadata(conn, user_id, path)
+            if metadata:
+                background_tasks.add_task(version_manager.create_version, user_id, path, metadata['device_name'])
+            crud.delete_file_metadata(conn, user_id, path)
+            conn.commit()
+
+    await asyncio.to_thread(_delete_metadata)
         
     safe_path = os.path.abspath(os.path.join(STORAGE_DIR, str(user_id), path.lstrip("/\\")))
     if os.path.exists(safe_path):

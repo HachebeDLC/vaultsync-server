@@ -1,3 +1,4 @@
+import glob
 import os
 import shutil
 import logging
@@ -51,13 +52,13 @@ class VersionManager:
         """
         version_directory = self.get_version_dir(user_id)
         safe_name = path.replace("/", "_").replace("\\", "_").replace(" ", "_")
-        prefix = f"{safe_name}.~"
-        versions = sorted([filename for filename in os.listdir(version_directory) if filename.startswith(prefix)])
-        
+        pattern = os.path.join(version_directory, f"{safe_name}.~*")
+        versions = sorted(glob.glob(pattern))
+
         while len(versions) > self.max_versions:
             file_to_remove = versions.pop(0)
-            os.remove(os.path.join(version_directory, file_to_remove))
-            logger.info(f"🗑️ ROTATED: Removed old version {file_to_remove}")
+            os.remove(file_to_remove)
+            logger.info(f"🗑️ ROTATED: Removed old version {os.path.basename(file_to_remove)}")
 
     def list_versions(self, user_id: int, path: str) -> List[dict]:
         """
@@ -70,9 +71,10 @@ class VersionManager:
         
         if not os.path.exists(version_directory):
             return []
-            
-        versions = sorted([filename for filename in os.listdir(version_directory) if filename.startswith(prefix)], reverse=True)
-        for version_filename in versions:
+
+        pattern = os.path.join(version_directory, f"{safe_name}.~*")
+        versions = sorted(glob.glob(pattern), reverse=True)
+        for version_filename in [os.path.basename(v) for v in versions]:
             full_path = os.path.join(version_directory, version_filename)
             try:
                 parts = version_filename.split("~")

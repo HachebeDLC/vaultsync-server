@@ -101,7 +101,8 @@ def login(request: Request, credentials: UserLogin):
         raise HTTPException(status_code=500, detail="Authentication failed")
 
 @router.post("/refresh")
-def refresh(payload: TokenRefreshRequest):
+@limiter.limit("10/minute")
+def refresh(request: Request, payload: TokenRefreshRequest):
     """
     Exchanges a valid refresh token for a new access token.
     """
@@ -117,15 +118,20 @@ def refresh(payload: TokenRefreshRequest):
                 conn.commit()
                 raise HTTPException(status_code=401, detail="Refresh token expired")
                 
-            # Issue new access token, keep same refresh token for now or rotation
-            # For simplicity, we just issue a new access token
+            # Rotate: revoke the used token, issue a fresh pair
+            crud.revoke_refresh_token(conn, payload.refresh_token)
+
             access_token = jwt.encode(
-                {"sub": str(db_token['user_id']), "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)}, 
-                SECRET_KEY, 
+                {"sub": str(db_token['user_id']), "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)},
+                SECRET_KEY,
                 algorithm=ALGORITHM
             )
-            
-            return {"token": access_token}
+            new_refresh_token = secrets.token_urlsafe(32)
+            new_expires_at = int(time.time()) + (REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60)
+            crud.create_refresh_token(conn, db_token['user_id'], new_refresh_token, new_expires_at)
+            conn.commit()
+
+            return {"token": access_token, "refresh_token": new_refresh_token}
     except HTTPException:
         raise
     except Exception as e:

@@ -7,12 +7,13 @@ services:
     restart: unless-stopped
     ports:
       - "5436:8000"
+    env_file:
+      - .env
     environment:
       - DB_HOST=db
       - DB_NAME=vaultsync
       - DB_USER=vaultsync
       - DB_PASS=vaultsync_secure_password
-      - VAULTSYNC_SECRET=63f4945d921d599f27ae4fdf5bada3f1
     volumes:
       - ./storage:/app/storage
     depends_on:

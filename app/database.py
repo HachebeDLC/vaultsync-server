@@ -52,18 +52,23 @@ def init_db():
             # Users table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
-                    id SERIAL PRIMARY KEY, 
-                    email TEXT UNIQUE NOT NULL, 
-                    password_hash TEXT NOT NULL, 
-                    username TEXT, 
-                    encryption_key TEXT, 
-                    salt TEXT, 
-                    recovery_payload TEXT, 
-                    recovery_salt TEXT, 
+                    id SERIAL PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    username TEXT,
+                    salt TEXT,
+                    recovery_payload TEXT,
+                    recovery_salt TEXT,
                     created_at BIGINT
                 )
             ''')
             
+            # Migration: drop vestigial encryption_key column (key is derived client-side via PBKDF2)
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='encryption_key'")
+            if cursor.fetchone():
+                logger.info("Migrating: Dropping unused 'encryption_key' from 'users'")
+                cursor.execute("ALTER TABLE users DROP COLUMN encryption_key")
+
             # Migration check: salt column
             cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='salt'")
             if not cursor.fetchone():
@@ -91,9 +96,6 @@ def init_db():
                     UNIQUE(user_id, path)
                 )
             ''')
-            # Priority 8: Add index for path-prefix queries
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_files_path ON files (path)')
-
             # Refresh Tokens table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS refresh_tokens (

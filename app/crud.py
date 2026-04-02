@@ -34,18 +34,26 @@ def get_recovery_info(conn, email: str):
     )
     return cursor.fetchone()
 
-def list_user_files(conn, user_id: int, prefix: str = None):
+def list_user_files(conn, user_id: int, prefix: str = None, limit: int = 200, after: str = None):
     cursor = conn.cursor(cursor_factory=RealDictCursor)
+    params = [user_id]
+    conditions = ["user_id = %s"]
+
     if prefix:
-        cursor.execute(
-            "SELECT path, hash, size, updated_at, device_name FROM files WHERE user_id = %s AND path LIKE %s", 
-            (user_id, f"{prefix}%")
-        )
-    else:
-        cursor.execute(
-            "SELECT path, hash, size, updated_at, device_name FROM files WHERE user_id = %s", 
-            (user_id,)
-        )
+        conditions.append("path LIKE %s")
+        params.append(f"{prefix}%")
+
+    if after:
+        conditions.append("path > %s")
+        params.append(after)
+
+    query = (
+        f"SELECT path, hash, size, updated_at, device_name FROM files"
+        f" WHERE {' AND '.join(conditions)}"
+        f" ORDER BY path LIMIT %s"
+    )
+    params.append(limit + 1)  # fetch one extra to determine if there's a next page
+    cursor.execute(query, params)
     return cursor.fetchall()
 
 def get_file_metadata(conn, user_id: int, path: str):
