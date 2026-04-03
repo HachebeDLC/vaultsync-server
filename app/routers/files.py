@@ -62,18 +62,18 @@ async def check_blocks(body: BlockCheckRequest, current_user = Depends(get_curre
     Given a list of block hashes, returns the indices that are missing or different on the server.
     """
     user_id = current_user['id']
-    with get_db() as conn:
-        metadata = crud.get_file_metadata(conn, user_id, body.path)
-        if not metadata:
-            # If file doesn't exist, all blocks are missing
-            return {"missing": list(range(len(body.blocks)))}
-        
-        server_blocks = metadata.get('blocks', [])
-        missing = []
-        for i, h in enumerate(body.blocks):
-            if i >= len(server_blocks) or server_blocks[i] != h:
-                missing.append(i)
-        return {"missing": missing}
+
+    def _get_metadata():
+        with get_db() as conn:
+            return crud.get_file_metadata(conn, user_id, body.path)
+
+    metadata = await asyncio.to_thread(_get_metadata)
+    if not metadata:
+        return {"missing": list(range(len(body.blocks)))}
+
+    server_blocks = metadata.get('blocks', [])
+    missing = [i for i, h in enumerate(body.blocks) if i >= len(server_blocks) or server_blocks[i] != h]
+    return {"missing": missing}
 
 @router.post("/blocks/download")
 async def download_blocks(body: BlockDownloadRequest, current_user = Depends(get_current_user)):
