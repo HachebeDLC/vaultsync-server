@@ -3,7 +3,8 @@ import os
 import shutil
 import logging
 from datetime import datetime
-from typing import List
+from threading import Lock
+from typing import List, Set, Tuple
 from ..config import STORAGE_DIR
 
 logger = logging.getLogger("VaultSync")
@@ -12,10 +13,15 @@ class VersionManager:
     """
     Manages file versions for users, including creation, rotation, and restoration.
     Versions are stored in a hidden '.versions' directory within each user's storage root.
+
+    Versioning is Syncthing-style: the existing server copy is snapshotted before the
+    first upload fragment overwrites it, so every overwrite produces a restorable version.
     """
     def __init__(self, storage_root: str, max_versions: int = 5):
         self.storage_root = storage_root
         self.max_versions = max_versions
+        self._pending: Set[Tuple[int, str]] = set()  # (user_id, path) mid-upload
+        self._lock = Lock()
 
     def get_version_dir(self, user_id: int) -> str:
         """
@@ -99,11 +105,32 @@ class VersionManager:
         version_directory = self.get_version_dir(user_id)
         source_path = os.path.join(version_directory, version_id)
         destination_path = os.path.normpath(os.path.join(self.storage_root, str(user_id), path.lstrip("/\\")))
-        
+
         if not os.path.exists(source_path):
             raise FileNotFoundError(f"Version {version_id} not found")
-        
+
         shutil.copy2(source_path, destination_path)
         logger.info(f"⏪ RESTORED: {version_id} -> {path}")
+
+    def begin_upload(self, user_id: int, path: str, device_name: str):
+        """
+        Called before the first upload fragment is written for an existing file.
+        Snapshots the current server copy so it becomes restorable (Syncthing-style).
+        Subsequent fragments for the same upload are no-ops.
+        """
+        key = (user_id, path)
+        with self._lock:
+            if key in self._pending:
+                return
+            self._pending.add(key)
+        self.create_version(user_id, path, device_name)
+
+    def complete_upload(self, user_id: int, path: str):
+        """
+        Called after finalize. Clears the pending marker so the next overwrite
+        of this file will produce a new snapshot.
+        """
+        with self._lock:
+            self._pending.discard((user_id, path))
 
 version_manager = VersionManager(STORAGE_DIR)

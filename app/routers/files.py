@@ -153,12 +153,20 @@ async def upload_fragment(request: Request, background_tasks: BackgroundTasks, c
 
     bytes_written = 0
     hasher = hashlib.sha256()
-    
+
     # Pre-create or open existing file
     if not os.path.exists(safe_path):
         # Using synchronous open for initial creation is fine as it's a one-off
         with open(safe_path, "wb") as f:
             pass
+    else:
+        # Syncthing-style: snapshot existing file before first fragment overwrites it.
+        def _get_meta():
+            with get_db() as conn:
+                return crud.get_file_metadata(conn, user_id, path)
+        existing_meta = await asyncio.to_thread(_get_meta)
+        if existing_meta:
+            version_manager.begin_upload(user_id, path, existing_meta.get('device_name', 'unknown'))
             
     async with aiofiles.open(safe_path, "r+b") as f:
         await f.seek(offset)
@@ -226,7 +234,11 @@ async def finalize_upload(body: FinalizeRequest, current_user = Depends(get_curr
             conn.commit()
 
     await asyncio.to_thread(_upsert)
-        
+
+    # Clear the upload-in-progress marker so the next overwrite of this file
+    # will produce a fresh snapshot.
+    version_manager.complete_upload(user_id, body.path)
+
     # Extract system_id directly from the path structure
     system_id = body.path.split('/')[0] if '/' in body.path else 'unknown'
 
