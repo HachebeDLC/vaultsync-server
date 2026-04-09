@@ -1,6 +1,6 @@
 import logging
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from jose import jwt
 from passlib.context import CryptContext
@@ -22,7 +22,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def create_tokens(user_id: int):
     access_token = jwt.encode(
-        {"sub": str(user_id), "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)}, 
+        {"sub": str(user_id), "exp": datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)}, 
         SECRET_KEY, 
         algorithm=ALGORITHM
     )
@@ -95,6 +95,8 @@ def login(request: Request, credentials: UserLogin):
                 "salt": user.get('salt') or user['email']
             }
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ LOGIN ERROR: {str(e)}")
         logger.error(traceback.format_exc())
@@ -122,7 +124,7 @@ def refresh(request: Request, payload: TokenRefreshRequest):
             crud.revoke_refresh_token(conn, payload.refresh_token)
 
             access_token = jwt.encode(
-                {"sub": str(db_token['user_id']), "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)},
+                {"sub": str(db_token['user_id']), "exp": datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)},
                 SECRET_KEY,
                 algorithm=ALGORITHM
             )

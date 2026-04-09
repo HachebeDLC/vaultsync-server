@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from ..database import get_db
 from ..models import RecoverySetupRequest, RecoveryPayloadRequest
 from ..dependencies import get_current_user
+from ..limiter import limiter
 from .. import crud
 
 router = APIRouter(prefix="/api/v1/auth/recovery")
@@ -17,10 +18,12 @@ def setup_recovery(body: RecoverySetupRequest, current_user = Depends(get_curren
     return {"message": "OK"}
 
 @router.post("/payload")
-def get_recovery_payload(body: RecoveryPayloadRequest):
+@limiter.limit("5/minute")
+def get_recovery_payload(request: Request, body: RecoveryPayloadRequest):
     """
     Retrieves the recovery payload for a given email address. 
     Requires email as a key but doesn't require authentication (used when password is lost).
+    Rate limited to prevent email harvesting.
     """
     with get_db() as conn:
         user = crud.get_recovery_info(conn, body.email)

@@ -2,6 +2,7 @@ import glob
 import os
 import shutil
 import logging
+import asyncio
 from datetime import datetime
 from threading import Lock
 from typing import List, Set, Tuple
@@ -134,3 +135,4 @@ class VersionManager:
             self._pending.discard((user_id, path))
 
 version_manager = VersionManager(STORAGE_DIR)
+VersionManager(STORAGE_DIR)

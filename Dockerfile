@@ -14,8 +14,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the modular app code
 COPY app/ ./app/
 
-# Create storage directory
-RUN mkdir -p /app/storage
+# Create storage directory and set permissions
+RUN mkdir -p /app/storage && \
+    useradd -m vaultsync && \
+    chown -R vaultsync:vaultsync /app
+
+USER vaultsync
 
 EXPOSE 8000
 

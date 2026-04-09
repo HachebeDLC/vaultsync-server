@@ -1,7 +1,9 @@
 import os
 
 # --- Security & Auth ---
-SECRET_KEY = os.environ.get("VAULTSYNC_SECRET", "CHANGE_THIS_IN_PROD")
+SECRET_KEY = os.environ.get("VAULTSYNC_SECRET")
+if not SECRET_KEY:
+    raise ValueError("VAULTSYNC_SECRET environment variable is missing!")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
 REFRESH_TOKEN_EXPIRE_DAYS = 30
