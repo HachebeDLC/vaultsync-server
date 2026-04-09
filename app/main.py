@@ -15,7 +15,7 @@ from .limiter import limiter
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("VaultSync")
 
-app = FastAPI(title="VaultSync Server", version="1.2.1")
+app = FastAPI(title="VaultSync Server", version="1.4.0")
 
 # --- Rate Limiting ---
 app.state.limiter = limiter
