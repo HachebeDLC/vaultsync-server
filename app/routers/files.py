@@ -13,6 +13,7 @@ from ..database import get_db
 from ..models import FileRequest, RestoreRequest, BlockCheckRequest, BlockDownloadRequest, FinalizeRequest, RomMSyncRequest
 from ..dependencies import get_current_user
 from ..services.reassembly_service import reassembly_service
+from ..services.romm_client import romm_client
 from ..utils import is_safe_path, calculate_file_hash_and_blocks
 from ..services.version_manager import version_manager
 from .. import crud
@@ -253,7 +254,14 @@ async def finalize_upload(body: FinalizeRequest, current_user = Depends(get_curr
         "origin_device": body.device_name
     }))
     
+    # Optional: Trigger RomM sync if key provided in header
+    romm_key = request.headers.get("x-vaultsync-romm-key")
+    if romm_key:
+        logger.info(f"Triggering automatic RomM sync for {body.path}")
+        await romm_sync(RomMSyncRequest(path=body.path, key=romm_key), background_tasks, current_user)
+
     return {"message": "Finalized"}
+
 
 
 @router.post("/romm/sync")
@@ -291,27 +299,37 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
     temp_reassembly_dir = os.path.join(STORAGE_DIR, "temp_reassembly", str(user_id))
     os.makedirs(temp_reassembly_dir, exist_ok=True)
     
-    # Use a safe name for the reassembled file (standard save extension)
     out_name = os.path.basename(body.path)
     output_path = os.path.join(temp_reassembly_dir, out_name)
+    zip_path = output_path + ".zip"
 
     async def _do_sync():
         try:
-            # Reassemble
+            # 1. Reassemble
             await asyncio.to_thread(
                 reassembly_service.reassemble_file, 
                 safe_path, output_path, raw_key, metadata['size']
             )
-            logger.info(f"Reassembled {body.path} for RomM sync")
             
-            # TODO: Phase 3 - Push to RomM API
-            # For now we just log success and delete
+            # 2. Zip it (RomM likes zips)
+            await asyncio.to_thread(reassembly_service.zip_file, output_path, zip_path)
+            
+            # 3. Find RomM ID
+            rom_id = await romm_client.get_rom_id_by_path(body.path)
+            if not rom_id:
+                logger.error(f"Could not find RomM ID for {body.path}")
+                return
+
+            # 4. Push to RomM
+            success = await romm_client.upload_save(rom_id, zip_path, device_id=f"NeoSync-{metadata.get('device_name', 'Unknown')}")
+            if success:
+                logger.info(f"Successfully synced {body.path} to RomM ID {rom_id}")
             
         except Exception as e:
             logger.error(f"RomM Sync failed for {body.path}: {str(e)}")
         finally:
-            if os.path.exists(output_path):
-                os.remove(output_path)
+            if os.path.exists(output_path): os.remove(output_path)
+            if os.path.exists(zip_path): os.remove(zip_path)
 
     background_tasks.add_task(_do_sync)
     return {"message": "RomM sync task queued"}

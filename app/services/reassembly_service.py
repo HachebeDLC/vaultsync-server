@@ -59,3 +59,8 @@ class ReassemblyService:
         return output_path
 
 reassembly_service = ReassemblyService()
+    def zip_file(self, file_path: str, zip_path: str):
+        import zipfile
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            zipf.write(file_path, os.path.basename(file_path))
+        return zip_path

@@ -11,3 +11,4 @@ redis
 slowapi
 aiofiles
 cachetools
+httpx

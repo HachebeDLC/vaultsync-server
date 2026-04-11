@@ -40,3 +40,7 @@ ENCRYPTED_BLOCK_SIZE = BLOCK_SIZE + OVERHEAD
 
 # --- CORS ---
 CORS_ORIGINS = os.environ.get("VAULTSYNC_CORS_ORIGINS", "*").split(",")
+
+# --- RomM Integration ---
+ROMM_URL = os.environ.get("ROMM_URL", "")
+ROMM_API_KEY = os.environ.get("ROMM_API_KEY", "")
