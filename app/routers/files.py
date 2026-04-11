@@ -10,8 +10,9 @@ from fastapi.responses import FileResponse, StreamingResponse
 from ..config import STORAGE_DIR, get_block_size, OVERHEAD, get_encrypted_block_size
 from ..services.event_notifier import event_notifier
 from ..database import get_db
-from ..models import FileRequest, RestoreRequest, BlockCheckRequest, BlockDownloadRequest, FinalizeRequest
+from ..models import FileRequest, RestoreRequest, BlockCheckRequest, BlockDownloadRequest, FinalizeRequest, RomMSyncRequest
 from ..dependencies import get_current_user
+from ..services.reassembly_service import reassembly_service
 from ..utils import is_safe_path, calculate_file_hash_and_blocks
 from ..services.version_manager import version_manager
 from .. import crud
@@ -254,6 +255,66 @@ async def finalize_upload(body: FinalizeRequest, current_user = Depends(get_curr
     
     return {"message": "Finalized"}
 
+
+@router.post("/romm/sync")
+async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, current_user = Depends(get_current_user)):
+    """
+    Manually triggers a reassembly and RomM push for a file.
+    """
+    user_id = current_user['id']
+    if not is_safe_path(user_id, body.path):
+        raise HTTPException(status_code=403)
+        
+    safe_path = os.path.abspath(os.path.join(STORAGE_DIR, str(user_id), body.path.lstrip("/\\")))
+    if not os.path.exists(safe_path):
+        raise HTTPException(status_code=404)
+
+    def _get_metadata():
+        with get_db() as conn:
+            return crud.get_file_metadata(conn, user_id, body.path)
+            
+    metadata = await asyncio.to_thread(_get_metadata)
+    if not metadata:
+        raise HTTPException(status_code=404)
+
+    # Decode key (assumed base64 from client)
+    import base64
+    try:
+        raw_key = base64.b64decode(body.key)
+    except:
+        raise HTTPException(status_code=400, detail="Invalid key format (base64 expected)")
+        
+    if len(raw_key) != 32:
+        raise HTTPException(status_code=400, detail="Invalid key length (32 bytes expected for AES-256)")
+
+    # Run reassembly in background to avoid blocking
+    temp_reassembly_dir = os.path.join(STORAGE_DIR, "temp_reassembly", str(user_id))
+    os.makedirs(temp_reassembly_dir, exist_ok=True)
+    
+    # Use a safe name for the reassembled file (standard save extension)
+    out_name = os.path.basename(body.path)
+    output_path = os.path.join(temp_reassembly_dir, out_name)
+
+    async def _do_sync():
+        try:
+            # Reassemble
+            await asyncio.to_thread(
+                reassembly_service.reassemble_file, 
+                safe_path, output_path, raw_key, metadata['size']
+            )
+            logger.info(f"Reassembled {body.path} for RomM sync")
+            
+            # TODO: Phase 3 - Push to RomM API
+            # For now we just log success and delete
+            
+        except Exception as e:
+            logger.error(f"RomM Sync failed for {body.path}: {str(e)}")
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    background_tasks.add_task(_do_sync)
+    return {"message": "RomM sync task queued"}
 @router.delete("/files")
 async def delete_file(body: FileRequest, background_tasks: BackgroundTasks, current_user = Depends(get_current_user)):
     """

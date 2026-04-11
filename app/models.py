@@ -41,3 +41,7 @@ class RecoveryPayloadRequest(BaseModel):
 
 class TokenRefreshRequest(BaseModel):
     refresh_token: str
+
+class RomMSyncRequest(BaseModel):
+    path: str
+    key: str # User's ZK key (base64 or hex)
