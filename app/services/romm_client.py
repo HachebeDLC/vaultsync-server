@@ -16,20 +16,18 @@ class RomMClient:
 
     async def get_rom_id_by_path(self, path: str) -> Optional[int]:
         """
-        Attempts to find a ROM in RomM by its relative path.
-        Example: 'switch/01007300020FA000'
+        Attempts to find a ROM in RomM by its relative path or ID.
         """
         if not self.api_key:
             return None
             
         try:
-            # Note: RomM API might need specific search params. 
-            # We'll search by name (basename of path) and filter by platform.
             parts = path.split("/")
-            platform = parts[0]
+            platform = parts[0].lower()
             name = parts[-1]
             
             async with httpx.AsyncClient() as client:
+                # 1. Search by name (TitleID/GameID)
                 resp = await client.get(
                     f"{self.base_url}/api/roms",
                     params={"search_term": name, "platform_slug": platform},
@@ -39,8 +37,20 @@ class RomMClient:
                     data = resp.json()
                     results = data.get("results", [])
                     if results:
-                        # Return the first match
                         return results[0].get("id")
+
+                # 2. Try searching by full relative path
+                resp = await client.get(
+                    f"{self.base_url}/api/roms",
+                    params={"search_term": path, "platform_slug": platform},
+                    headers=self.headers
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    results = data.get("results", [])
+                    if results:
+                        return results[0].get("id")
+
         except Exception as e:
             logger.error(f"RomM look up failed: {str(e)}")
         return None

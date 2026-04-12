@@ -256,6 +256,8 @@ async def finalize_upload(request: Request, body: FinalizeRequest, background_ta
     
     # Optional: Trigger RomM sync if key provided in header
     romm_key = request.headers.get("x-vaultsync-romm-key")
+    if romm_key: logger.info(f"Received RomM key for {body.path}")
+    else: logger.info("No RomM key in headers")
     if romm_key:
         logger.info(f"Triggering automatic RomM sync for {body.path}")
         await romm_sync(RomMSyncRequest(path=body.path, key=romm_key), background_tasks, current_user)
