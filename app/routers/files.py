@@ -4,7 +4,7 @@ import asyncio
 import aiofiles
 import hashlib
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, BackgroundTasks, Header
 from fastapi.responses import FileResponse, StreamingResponse
 
 from ..config import STORAGE_DIR, get_block_size, OVERHEAD, get_encrypted_block_size
@@ -180,7 +180,7 @@ async def upload_fragment(request: Request, background_tasks: BackgroundTasks, c
     return {"message": "Fragment uploaded", "bytes": bytes_written, "sha256": hasher.hexdigest()}
 
 @router.post("/upload/finalize")
-async def finalize_upload(body: FinalizeRequest, current_user = Depends(get_current_user)):
+async def finalize_upload(request: Request, body: FinalizeRequest, background_tasks: BackgroundTasks, current_user = Depends(get_current_user)):
     """
     Finalizes a file upload. Avoids reading the whole file if smart delta hashing can be used.
     """
