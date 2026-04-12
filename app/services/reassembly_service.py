@@ -29,9 +29,6 @@ class ReassemblyService:
         
         plaintext = decryptor.update(ciphertext) + decryptor.finalize()
         
-        # PKCS7 Padding removal is handled by the encryptor/decryptor if configured,
-        # but in our Kotlin code we might be doing it manually or using a specific block size.
-        # AES-CBC requires data to be multiple of 16.
         return plaintext
 
     def reassemble_file(self, encrypted_file_path: str, output_path: str, key: bytes, original_size: int):
@@ -50,7 +47,6 @@ class ReassemblyService:
                 decrypted = self.decrypt_block(block, key)
                 
                 # Trim padding for the last block if necessary
-                # The 'original_size' tells us exactly how much to write
                 write_len = min(len(decrypted), original_size - bytes_processed)
                 if write_len > 0:
                     fout.write(decrypted[:write_len])
@@ -58,9 +54,10 @@ class ReassemblyService:
                     
         return output_path
 
-reassembly_service = ReassemblyService()
     def zip_file(self, file_path: str, zip_path: str):
         import zipfile
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
             zipf.write(file_path, os.path.basename(file_path))
         return zip_path
+
+reassembly_service = ReassemblyService()
