@@ -255,7 +255,6 @@ async def finalize_upload(request: Request, body: FinalizeRequest, background_ta
     }))
     
     # Optional: Trigger RomM sync if key provided in header
-    # Optional: Trigger RomM sync if key provided in header
     romm_key = request.headers.get("x-vaultsync-romm-key")
     romm_url_header = request.headers.get("x-romm-url")
     romm_api_key_header = request.headers.get("x-romm-api-key")
@@ -300,11 +299,18 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
         raise HTTPException(status_code=404)
 
     # Decode key (assumed base64 from client)
+    # Decode key (assumed base64Url from client)
     import base64
     try:
-        raw_key = base64.b64decode(body.key)
-    except:
-        raise HTTPException(status_code=400, detail="Invalid key format (base64 expected)")
+        # Handle missing padding
+        key_b64 = body.key
+        missing_padding = len(key_b64) % 4
+        if missing_padding:
+            key_b64 += '=' * (4 - missing_padding)
+        raw_key = base64.urlsafe_b64decode(key_b64)
+    except Exception as e:
+        logger.error(f"Base64 decode failed: {str(e)}")
+        raise HTTPException(status_code=400, detail="Invalid key format (base64Url expected)")
         
     if len(raw_key) != 32:
         raise HTTPException(status_code=400, detail="Invalid key length (32 bytes expected for AES-256)")
