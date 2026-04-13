@@ -40,7 +40,7 @@ def list_user_files(conn, user_id: int, prefix: str = None, limit: int = 200, af
     conditions = ["user_id = %s"]
 
     if prefix:
-        conditions.append("path LIKE %s")
+        conditions.append("path ILIKE %s")
         params.append(f"{prefix}%")
 
     if after:
