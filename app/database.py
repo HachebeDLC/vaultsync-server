@@ -81,6 +81,13 @@ def init_db():
                 logger.info("Migrating: Adding recovery columns to 'users'")
                 cursor.execute("ALTER TABLE users ADD COLUMN recovery_payload TEXT")
                 cursor.execute("ALTER TABLE users ADD COLUMN recovery_salt TEXT")
+
+            # Migration check: RomM columns
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='romm_url'")
+            if not cursor.fetchone():
+                logger.info("Migrating: Adding RomM columns to 'users'")
+                cursor.execute("ALTER TABLE users ADD COLUMN romm_url TEXT")
+                cursor.execute("ALTER TABLE users ADD COLUMN romm_api_key TEXT")
             
             # Files table
             cursor.execute('''

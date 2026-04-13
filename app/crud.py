@@ -152,3 +152,10 @@ def revoke_all_user_refresh_tokens(conn, user_id: int):
         "UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = %s",
         (user_id,)
     )
+
+def update_user_romm_creds(conn, user_id: int, romm_url: str, romm_api_key: str):
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET romm_url = %s, romm_api_key = %s WHERE id = %s", 
+        (romm_url, romm_api_key, user_id)
+    )

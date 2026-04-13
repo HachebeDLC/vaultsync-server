@@ -13,7 +13,7 @@ from ..database import get_db
 from ..models import FileRequest, RestoreRequest, BlockCheckRequest, BlockDownloadRequest, FinalizeRequest, RomMSyncRequest
 from ..dependencies import get_current_user
 from ..services.reassembly_service import reassembly_service
-from ..services.romm_client import romm_client
+from ..services.romm_client import romm_client, RomMClient
 from ..utils import is_safe_path, calculate_file_hash_and_blocks
 from ..services.version_manager import version_manager
 from .. import crud
@@ -255,14 +255,26 @@ async def finalize_upload(request: Request, body: FinalizeRequest, background_ta
     }))
     
     # Optional: Trigger RomM sync if key provided in header
+    # Optional: Trigger RomM sync if key provided in header
     romm_key = request.headers.get("x-vaultsync-romm-key")
-    if romm_key: logger.info(f"Received RomM key for {body.path}")
-    else: logger.info("No RomM key in headers")
+    romm_url_header = request.headers.get("x-romm-url")
+    romm_api_key_header = request.headers.get("x-romm-api-key")
+
+    if romm_url_header and romm_api_key_header:
+        # Update user's RomM credentials in DB
+        def _update_creds():
+            with get_db() as conn:
+                crud.update_user_romm_creds(conn, user_id, romm_url_header, romm_api_key_header)
+                conn.commit()
+        await asyncio.to_thread(_update_creds)
+        logger.info(f"Updated RomM credentials for user {user_id}")
+
     if romm_key:
         logger.info(f"Triggering automatic RomM sync for {body.path}")
         await romm_sync(RomMSyncRequest(path=body.path, key=romm_key), background_tasks, current_user)
 
     return {"message": "Finalized"}
+
 
 
 
@@ -297,6 +309,12 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
     if len(raw_key) != 32:
         raise HTTPException(status_code=400, detail="Invalid key length (32 bytes expected for AES-256)")
 
+    # Resolve RomM Client (use user specific if available)
+    target_client = romm_client
+    if current_user.get('romm_url') and current_user.get('romm_api_key'):
+        target_client = RomMClient(current_user['romm_url'], current_user['romm_api_key'])
+        logger.info(f"Using user-specific RomM instance: {current_user['romm_url']}")
+
     # Run reassembly in background to avoid blocking
     temp_reassembly_dir = os.path.join(STORAGE_DIR, "temp_reassembly", str(user_id))
     os.makedirs(temp_reassembly_dir, exist_ok=True)
@@ -317,13 +335,13 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
             await asyncio.to_thread(reassembly_service.zip_file, output_path, zip_path)
             
             # 3. Find RomM ID
-            rom_id = await romm_client.get_rom_id_by_path(body.path)
+            rom_id = await target_client.get_rom_id_by_path(body.path)
             if not rom_id:
-                logger.error(f"Could not find RomM ID for {body.path}")
+                logger.error(f"Could not find RomM ID for {body.path} on {target_client.base_url}")
                 return
 
             # 4. Push to RomM
-            success = await romm_client.upload_save(rom_id, zip_path, device_id=f"NeoSync-{metadata.get('device_name', 'Unknown')}")
+            success = await target_client.upload_save(rom_id, zip_path, device_id=f"NeoSync-{metadata.get('device_name', 'Unknown')}")
             if success:
                 logger.info(f"Successfully synced {body.path} to RomM ID {rom_id}")
             
