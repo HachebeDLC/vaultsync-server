@@ -21,6 +21,19 @@ from .. import crud
 logger = logging.getLogger("VaultSync")
 router = APIRouter(prefix="/api/v1")
 
+# Per-file upload locks keyed by (user_id, path).
+# Prevents two concurrent finalize_upload calls for the same file from
+# racing on truncate → upsert → complete_upload.
+_upload_locks: dict[tuple, asyncio.Lock] = {}
+_upload_locks_mutex = asyncio.Lock()
+
+async def _get_upload_lock(user_id: int, path: str) -> asyncio.Lock:
+    key = (user_id, path)
+    async with _upload_locks_mutex:
+        if key not in _upload_locks:
+            _upload_locks[key] = asyncio.Lock()
+        return _upload_locks[key]
+
 @router.get("/files")
 def list_files(prefix: Optional[str] = None, limit: int = 200, after: Optional[str] = None, current_user = Depends(get_current_user)):
     """
@@ -195,51 +208,52 @@ async def finalize_upload(request: Request, body: FinalizeRequest, background_ta
     actual_hash = body.hash
     block_hashes = []
 
-    def _get_metadata():
-        with get_db() as conn:
-            return crud.get_file_metadata(conn, user_id, body.path)
+    file_lock = await _get_upload_lock(user_id, body.path)
+    async with file_lock:
+        def _get_metadata():
+            with get_db() as conn:
+                return crud.get_file_metadata(conn, user_id, body.path)
 
-    metadata = await asyncio.to_thread(_get_metadata)
-    if metadata and metadata.get('blocks'):
-        block_hashes = metadata['blocks']
+        metadata = await asyncio.to_thread(_get_metadata)
+        if metadata and metadata.get('blocks'):
+            block_hashes = metadata['blocks']
 
-    # If it's a completely new file or we don't have blocks, calculate the hard way.
-    if not block_hashes:
-        _, block_hashes = await calculate_file_hash_and_blocks(safe_path)
+        # If it's a completely new file or we don't have blocks, calculate the hard way.
+        if not block_hashes:
+            _, block_hashes = await calculate_file_hash_and_blocks(safe_path)
 
-    size = body.size or os.path.getsize(safe_path)
+        size = body.size or os.path.getsize(safe_path)
 
-    # --- CRITICAL FIX: TRUNCATE PHYSICAL FILE ---
-    # Prevents "ghost data" if the file has shrunk.
-    if size == 0:
-        expected_enc_size = 0
-    else:
-        bs = get_block_size(size)
-        num_blocks = (size + bs - 1) // bs
-        expected_enc_size = size + (num_blocks * OVERHEAD)
-    
-    real_fs_size = os.path.getsize(safe_path)
-    if real_fs_size > expected_enc_size:
-        logger.info(f"✂️ TRUNCATING: {body.path} from {real_fs_size} to {expected_enc_size}")
-        # Note: 'a' mode allows truncation while keeping the file open safely
-        with open(safe_path, "a") as f:
-            f.truncate(expected_enc_size)
-    # --------------------------------------------
+        # --- CRITICAL FIX: TRUNCATE PHYSICAL FILE ---
+        # Prevents "ghost data" if the file has shrunk.
+        if size == 0:
+            expected_enc_size = 0
+        else:
+            bs = get_block_size(size)
+            num_blocks = (size + bs - 1) // bs
+            expected_enc_size = size + (num_blocks * OVERHEAD)
 
-    def _upsert():
-        with get_db() as conn:
-            crud.upsert_file_metadata(
-                conn, user_id, body.path, actual_hash,
-                size, body.updated_at,
-                body.device_name, block_hashes
-            )
-            conn.commit()
+        real_fs_size = os.path.getsize(safe_path)
+        if real_fs_size > expected_enc_size:
+            logger.info(f"✂️ TRUNCATING: {body.path} from {real_fs_size} to {expected_enc_size}")
+            with open(safe_path, "a") as f:
+                f.truncate(expected_enc_size)
+        # --------------------------------------------
 
-    await asyncio.to_thread(_upsert)
+        def _upsert():
+            with get_db() as conn:
+                crud.upsert_file_metadata(
+                    conn, user_id, body.path, actual_hash,
+                    size, body.updated_at,
+                    body.device_name, block_hashes
+                )
+                conn.commit()
 
-    # Clear the upload-in-progress marker so the next overwrite of this file
-    # will produce a fresh snapshot.
-    version_manager.complete_upload(user_id, body.path)
+        await asyncio.to_thread(_upsert)
+
+        # Clear the upload-in-progress marker so the next overwrite of this file
+        # will produce a fresh snapshot.
+        version_manager.complete_upload(user_id, body.path)
 
     # Extract system_id directly from the path structure
     system_id = body.path.split('/')[0] if '/' in body.path else 'unknown'
