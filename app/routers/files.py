@@ -286,10 +286,38 @@ async def finalize_upload(request: Request, body: FinalizeRequest, background_ta
         # Update user's RomM credentials in DB
         def _update_creds():
             with get_db() as conn:
-                crud.update_user_romm_creds(conn, user_id, romm_url_header, romm_api_key_header)
-                conn.commit()
-        await asyncio.to_thread(_update_creds)
-        logger.info(f"Updated RomM credentials for user {user_id}")
+                from psycopg2.extras import RealDictCursor
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
+                cursor.execute("SELECT romm_url, romm_api_key FROM users WHERE id = %s", (user_id,))
+                row = cursor.fetchone()
+                if not row or row.get('romm_api_key') != romm_api_key_header:
+                    crud.update_user_romm_creds(conn, user_id, romm_url_header, romm_api_key_header)
+                    conn.commit()
+                    return True
+                return False
+
+        creds_changed = await asyncio.to_thread(_update_creds)
+        if creds_changed:
+            logger.info(f"RomM credentials updated for user {user_id}. Queueing full library sync.")
+            
+            async def _pull_library():
+                try:
+                    from ..services.romm_client import RomMClient
+                    client = RomMClient(romm_url_header, romm_api_key_header)
+                    all_games = await client.fetch_entire_library()
+                    logger.info(f"RomM Sync: Downloaded {len(all_games)} games for user {user_id}.")
+                    
+                    def _save_lib():
+                        with get_db() as conn:
+                            crud.sync_user_romm_library(conn, user_id, all_games)
+                            conn.commit()
+                            
+                    await asyncio.to_thread(_save_lib)
+                    logger.info(f"RomM Sync: Successfully populated local library cache for user {user_id}.")
+                except Exception as e:
+                    logger.error(f"RomM Sync: Failed to pull library for user {user_id}: {str(e)}")
+            
+            background_tasks.add_task(_pull_library)
 
     if romm_key:
         logger.info(f"Triggering automatic RomM sync for {body.path}")
@@ -369,10 +397,75 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
             
             # 2. Sequential execution block for RomM operations
             async with romm_push_lock:
-                # A. Find RomM ID
-                rom_id = await target_client.get_rom_id_by_path(body.path)
+                # A. Local RomM Match
+                from ..services.title_db_service import title_db
+                import re
+                import os
+                from ..database import get_db
+                from .. import crud
+                
+                parts = body.path.split("/")
+                platform = parts[0].lower()
+                
+                platform_map = {
+                    'switch': 'switch', 'eden': 'switch',
+                    'gc': 'gamecube', 'dolphin': 'gamecube', 'wii': 'wii',
+                    'psp': 'psp', 'ppsspp': 'psp',
+                    'ps2': 'ps2', 'pcsx2': 'ps2', 'aethersx2': 'ps2',
+                    '3ds': '3ds', 'citra': '3ds', 'azahar': '3ds',
+                    'gba': 'gba', 'snes': 'snes', 'n64': 'n64', 'nds': 'nds',
+                    'gb': 'gb', 'gbc': 'gbc', 'nes': 'nes', 'megadrive': 'megadrive'
+                }
+                
+                romm_platform = platform_map.get(platform)
+                target_id = None
+                target_name = parts[-1]
+                
+                if platform in ('switch', 'eden') and len(parts) >= 3:
+                    target_id = parts[1].upper()
+                elif platform in ('gc', 'dolphin', 'wii') and len(parts) >= 2:
+                    target_id = parts[1].split('.')[0].upper()
+                elif platform in ('psp', 'ppsspp') and len(parts) >= 3 and parts[1] == 'SAVEDATA':
+                    target_id = parts[2].upper()
+                elif platform == '3ds' and len(parts) >= 3 and parts[1] == 'saves':
+                    target_id = parts[2].upper()
+
+                translated_name = None
+                if target_id:
+                    translated_name = title_db.translate(target_id)
+
+                if translated_name:
+                    target_name = translated_name
+
+                clean_target = os.path.splitext(target_name)[0]
+                clean_target = re.sub(r'^\d+\.\s*', '', clean_target).lower().strip()
+
+                def _local_match():
+                    with get_db() as conn:
+                        found_id = crud.find_romm_game_for_user(conn, user_id, target_id, clean_target, romm_platform)
+                        if not found_id:
+                            cursor = conn.cursor()
+                            cursor.execute("SELECT COUNT(*) FROM romm_games WHERE user_id = %s", (user_id,))
+                            count = cursor.fetchone()[0]
+                            if count == 0:
+                                return "NEEDS_SYNC"
+                        return found_id
+                
+                rom_id = await asyncio.to_thread(_local_match)
+                
+                if rom_id == "NEEDS_SYNC":
+                    logger.info(f"RomM Cache is empty for user {user_id}. Fetching full library...")
+                    all_games = await target_client.fetch_entire_library()
+                    logger.info(f"RomM Sync: Downloaded {len(all_games)} games.")
+                    def _save_lib():
+                        with get_db() as conn:
+                            crud.sync_user_romm_library(conn, user_id, all_games)
+                            conn.commit()
+                            return crud.find_romm_game_for_user(conn, user_id, target_id, clean_target, romm_platform)
+                    rom_id = await asyncio.to_thread(_save_lib)
+                    
                 if not rom_id:
-                    logger.error(f"Could not find RomM ID for {body.path} on {target_client.base_url}")
+                    logger.warning(f"Could not find RomM match for {body.path} in local cache. Skipping.")
                     return
 
                 # B. Push raw file to RomM

@@ -159,3 +159,69 @@ def update_user_romm_creds(conn, user_id: int, romm_url: str, romm_api_key: str)
         "UPDATE users SET romm_url = %s, romm_api_key = %s WHERE id = %s", 
         (romm_url, romm_api_key, user_id)
     )
+
+def sync_user_romm_library(conn, user_id: int, games_list: list):
+    """Replaces the user's cached RomM library with a fresh list."""
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM romm_games WHERE user_id = %s", (user_id,))
+    
+    if not games_list:
+        return
+        
+    from psycopg2.extras import execute_values
+    query = """
+        INSERT INTO romm_games (user_id, romm_id, name, fs_name, platform_slug)
+        VALUES %s
+    """
+    
+    # We use a set to avoid duplicate (user_id, romm_id) pairs if RomM API returns dupes
+    seen_ids = set()
+    data = []
+    
+    for g in games_list:
+        romm_id = g.get('id')
+        if not romm_id or romm_id in seen_ids:
+            continue
+            
+        seen_ids.add(romm_id)
+        name = g.get('name', '')
+        fs_name = g.get('fs_name', '')
+        platform = g.get('platform', {})
+        platform_slug = platform.get('slug', '') if platform else ''
+        
+        data.append((user_id, romm_id, name, fs_name, platform_slug))
+        
+    execute_values(cursor, query, data)
+
+def find_romm_game_for_user(conn, user_id: int, target_id: str, target_name: str, platform_slug: str = None):
+    """Searches the user's localized RomM library for a match."""
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    
+    # 1. Exact ID Match (for Switch, GC, PSP)
+    if target_id:
+        query = "SELECT romm_id, name FROM romm_games WHERE user_id = %s AND (name ILIKE %s OR fs_name ILIKE %s)"
+        params = [user_id, f'%{target_id}%', f'%{target_id}%']
+        if platform_slug:
+            query += " AND platform_slug = %s"
+            params.append(platform_slug)
+        query += " LIMIT 1"
+        
+        cursor.execute(query, tuple(params))
+        res = cursor.fetchone()
+        if res: return res['romm_id']
+        
+    # 2. Fuzzy Name Match
+    if target_name:
+        clean_target = target_name.lower().strip()
+        query = "SELECT romm_id, name FROM romm_games WHERE user_id = %s AND (name ILIKE %s OR fs_name ILIKE %s)"
+        params = [user_id, f'%{clean_target}%', f'%{clean_target}%']
+        if platform_slug:
+            query += " AND platform_slug = %s"
+            params.append(platform_slug)
+        query += " LIMIT 1"
+        
+        cursor.execute(query, tuple(params))
+        res = cursor.fetchone()
+        if res: return res['romm_id']
+        
+    return None

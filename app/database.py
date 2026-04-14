@@ -128,6 +128,18 @@ def init_db():
             ''')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_refresh_token ON refresh_tokens (token)')
             
+            # RomM Games Cache
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS romm_games (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    romm_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    fs_name TEXT,
+                    platform_slug TEXT,
+                    UNIQUE(user_id, romm_id)
+                )
+            ''')
             conn.commit()
             logger.info("✅ Database schema is up to date")
     except Exception as e:
