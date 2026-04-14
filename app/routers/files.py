@@ -355,13 +355,17 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
                 safe_path, output_path, raw_key, metadata['size']
             )
             
-            # 2. Find RomM ID
+            # 2. Add a small jitter/delay to prevent DDOSing RomM during mass syncs
+            # We wait 1 second per task to spread out the API hits
+            await asyncio.sleep(1.0)
+
+            # 3. Find RomM ID
             rom_id = await target_client.get_rom_id_by_path(body.path)
             if not rom_id:
                 logger.error(f"Could not find RomM ID for {body.path} on {target_client.base_url}")
                 return
 
-            # 3. Push raw file to RomM
+            # 4. Push raw file to RomM
             success = await target_client.upload_save(rom_id, output_path, device_id=f"NeoSync-{metadata.get('device_name', 'Unknown')}")
             if success:
                 logger.info(f"Successfully synced {body.path} to RomM ID {rom_id}")
@@ -370,7 +374,6 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
             logger.error(f"RomM Sync failed for {body.path}: {str(e)}")
         finally:
             if os.path.exists(output_path): os.remove(output_path)
-
     background_tasks.add_task(_do_sync)
     return {"message": "RomM sync task queued"}
 
