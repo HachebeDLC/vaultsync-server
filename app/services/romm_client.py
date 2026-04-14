@@ -16,9 +16,10 @@ class RomMClient:
 
     async def get_rom_id_by_path(self, path: str) -> Optional[int]:
         """
-        Hyper-robust lookup: Handles 'items' vs 'results' bug, 
-        strips leading numbers, performs deep fuzzy matching,
-        and uses a local TitleDB for known TitleIDs.
+        Hyper-robust lookup: 
+        1. Manual Overrides (title_db.json)
+        2. Asset DBs (GameDB TSVs/JSONs)
+        3. Smart Fuzzy Match (RomM Search)
         """
         if not self.api_key:
             return None
@@ -26,13 +27,14 @@ class RomMClient:
         try:
             import re
             import json
+            from .title_db_service import title_db
             
-            # Load local TitleDB
-            title_db_path = os.path.join(os.path.dirname(__file__), '..', 'title_db.json')
-            title_db = {}
-            if os.path.exists(title_db_path):
-                with open(title_db_path, 'r') as f:
-                    title_db = json.load(f)
+            # Load manual overrides
+            overrides_path = os.path.join(os.path.dirname(__file__), '..', 'title_db.json')
+            overrides = {}
+            if os.path.exists(overrides_path):
+                with open(overrides_path, 'r') as f:
+                    overrides = json.load(f)
 
             parts = path.split("/")
             platform = parts[0].lower()
@@ -51,24 +53,39 @@ class RomMClient:
             target_id = None
             target_name = parts[-1]
             
-            # Extract ID if possible
+            # 1. Extract the internal ID (TitleID/GameID/Serial)
             if platform in ('switch', 'eden') and len(parts) >= 3:
-                target_id = parts[1].upper()
+                target_id = parts[1].upper() # 01007300020FA000
             elif platform in ('gc', 'dolphin', 'wii') and len(parts) >= 2:
-                target_id = parts[1].split('.')[0].upper()
+                target_id = parts[1].split('.')[0].upper() # GZLE01
             elif platform in ('psp', 'ppsspp') and len(parts) >= 3 and parts[1] == 'SAVEDATA':
-                target_id = parts[2].upper()
+                target_id = parts[2].upper() # ULUS10025
+            elif platform == '3ds' and len(parts) >= 3 and parts[1] == 'saves':
+                target_id = parts[2].upper() # 00030700
+
+            # 2. TRANSLATION LAYER
+            translated_name = None
             
-            # Check TitleDB
-            if target_id and target_id in title_db:
-                target_name = title_db[target_id]
-                logger.info(f"TitleDB Match: Translated {target_id} to '{target_name}'")
+            # A. Check manual overrides first
+            if target_id and target_id in overrides:
+                translated_name = overrides[target_id]
+                logger.info(f"RomM Link: Override Match {target_id} -> '{translated_name}'")
             
-            # Clean target name: strip extension and common prefixes/numbers
+            # B. Check Asset DBs (GameDB)
+            if not translated_name and target_id:
+                translated_name = title_db.translate(target_id)
+                if translated_name:
+                    logger.info(f"RomM Link: AssetDB Match {target_id} -> '{translated_name}'")
+
+            # Update search term if translated
+            if translated_name:
+                target_name = translated_name
+
+            # 3. Clean search term for RomM API
             clean_target = os.path.splitext(target_name)[0]
             clean_target = re.sub(r'^\d+\.\s*', '', clean_target).lower().strip()
 
-            logger.info(f"RomM Smart-Link: Platform='{romm_platform or platform}', ID='{target_id}', Search='{clean_target}'")
+            logger.info(f"RomM Link: Platform='{romm_platform or platform}', ID='{target_id}', Search='{clean_target}'")
 
             async with httpx.AsyncClient() as client:
                 params = {"limit": 1000}
@@ -91,25 +108,25 @@ class RomMClient:
                         rom_name = rom.get("name", "").lower()
                         rom_fs_name = rom.get("fs_name", "").lower()
                         
-                        # 1. Direct ID match (only if not using TitleDB translation)
-                        if target_id and not (target_id in title_db) and target_id in rom_str:
-                            logger.info(f"RomM Smart-Link: Found ID {target_id} match: {rom_name}")
+                        # Direct ID match (only if not already translated)
+                        if target_id and not translated_name and target_id in rom_str:
+                            logger.info(f"RomM Link: Found ID {target_id} in RomM Metadata: {rom_name}")
                             return rom['id']
                             
-                        # 2. Clean name match
+                        # Name/FS match
                         clean_rom_name = re.sub(r'^\d+\.\s*', '', rom_name).strip()
                         clean_rom_fs = re.sub(r'^\d+\.\s*', '', rom_fs_name).strip()
                         
                         if clean_target in clean_rom_name or clean_rom_name in clean_target:
-                             logger.info(f"RomM Smart-Link: Found Name match: {rom_name}")
+                             logger.info(f"RomM Link: Found Name Match: {rom_name} (ID: {rom['id']})")
                              return rom['id']
                         if clean_target in clean_rom_fs or clean_rom_fs in clean_target:
-                             logger.info(f"RomM Smart-Link: Found FS match: {rom_fs_name}")
+                             logger.info(f"RomM Link: Found FS Match: {rom_fs_name} (ID: {rom['id']})")
                              return rom['id']
                              
-            logger.warning(f"RomM Smart-Link: No match found for '{target_id or clean_target}'")
+            logger.warning(f"RomM Link: No match found for '{target_id or clean_target}'")
         except Exception as e:
-            logger.error(f"RomM look up failed: {str(e)}")
+            logger.error(f"RomM Link failed for {path}: {str(e)}")
         return None
     async def upload_save(self, rom_id: int, file_path: str, device_id: str = "NeoSync"):
         """
