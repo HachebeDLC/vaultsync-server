@@ -15,6 +15,7 @@ services:
       - REDIS_HOST=redis
     volumes:
       - ./storage:/app/storage
+      - ./assets:/app/app/assets
     depends_on:
       - db
       - redis
