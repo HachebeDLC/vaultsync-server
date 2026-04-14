@@ -167,3 +167,6 @@ class RomMClient:
         except Exception as e:
             logger.error(f"RomM upload error: {str(e)}")
         return False
+
+# Global default instance (uses env vars)
+romm_client = RomMClient()
