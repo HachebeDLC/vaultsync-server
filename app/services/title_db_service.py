@@ -43,7 +43,11 @@ class TitleDBService:
                         self.db[row['ID'].upper()] = title
                     # Store by Serial (often different)
                     if 'serial' in row:
-                        self.db[row['serial'].upper()] = title
+                        serial_id = row['serial'].upper()
+                        self.db[serial_id] = title
+                        # Also strip hyphens for PSP (ULES-01505 -> ULES01505)
+                        if '-' in serial_id:
+                            self.db[serial_id.replace('-', '')] = title
         except Exception as e:
             logger.error(f"Failed to load TSV {path}: {str(e)}")
 
@@ -53,8 +57,14 @@ class TitleDBService:
             with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 
+                # Format 0: Simple Key-Value Dict (Master TitleDB)
+                # Check if it's a flat dictionary where values are strings
+                if isinstance(data, dict) and all(isinstance(v, str) for v in data.values()):
+                    for k, v in data.items():
+                        self.db[k.upper()] = v
+                        
                 # Format 1: [{Name: "...", TitleID: "..."}] (hax0kartik/3dsdb)
-                if isinstance(data, list):
+                elif isinstance(data, list):
                     for item in data:
                         name = item.get('Name') or item.get('name')
                         tid = item.get('TitleID') or item.get('titleId')
@@ -82,6 +92,12 @@ class TitleDBService:
         if clean_id in self.db:
             return self.db[clean_id]
         
+        # GameCube/Wii 4-char matching (GameTDB has 6-char IDs like GM4E01, folder is GM4E)
+        if len(clean_id) == 4:
+            for db_id, name in self.db.items():
+                if len(db_id) == 6 and db_id.startswith(clean_id):
+                    return name
+                    
         # 2. 3DS Low-ID matching (e.g. 00030700)
         # Often TitleIDs in DBs are full 16-char IDs, but folders are only 8-char.
         if len(clean_id) == 8:
