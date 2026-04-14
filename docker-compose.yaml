@@ -4,51 +4,48 @@ services:
     container_name: vaultsync_server
     restart: unless-stopped
     ports:
-      - "5436:8000"
+    - 5436:8000
     env_file:
-      - .env
+    - .env
     environment:
-      - DB_HOST=db
-      - DB_NAME=${POSTGRES_DB:-vaultsync}
-      - DB_USER=${POSTGRES_USER:-vaultsync}
-      - DB_PASS=${POSTGRES_PASSWORD}
-      - REDIS_HOST=redis
+    - DB_HOST=db
+    - DB_NAME=${POSTGRES_DB:-vaultsync}
+    - DB_USER=${POSTGRES_USER:-vaultsync}
+    - DB_PASS=${POSTGRES_PASSWORD}
+    - REDIS_HOST=redis
     volumes:
-      - ./storage:/app/storage
-      - ./assets:/app/app/assets
+    - ./storage:/app/storage
+    - ./assets:/app/app/assets
     depends_on:
-      - db
-      - redis
+    - db
+    - redis
     labels:
-      - "ofelia.enabled=true"
-      - "ofelia.job-exec.update_master_db.schedule=@weekly"
-      - "ofelia.job-exec.update_master_db.command=python3 app/update_master_db.py"
-
+    - ofelia.enabled=true
+    - ofelia.job-exec.update_master_db.schedule=@weekly
+    - ofelia.job-exec.update_master_db.command=python3 app/update_master_db.py
+    - com.vaultsync.ofelia=true
   ofelia:
     image: mcuadros/ofelia:latest
     container_name: vaultsync_ofelia
     restart: unless-stopped
     depends_on:
-      - vaultsync
-    command: daemon --docker
+    - vaultsync
+    command: daemon --docker --docker-filter label=com.vaultsync.ofelia
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-
+    - /var/run/docker.sock:/var/run/docker.sock:ro
   db:
     image: postgres:15-alpine
     container_name: vaultsync_db
     restart: unless-stopped
     environment:
-      - POSTGRES_DB=vaultsync
-      - POSTGRES_USER=vaultsync
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    - POSTGRES_DB=vaultsync
+    - POSTGRES_USER=vaultsync
+    - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-
+    - postgres_data:/var/lib/postgresql/data
   redis:
     image: redis:7-alpine
     container_name: vaultsync_redis
     restart: unless-stopped
-    
 volumes:
-  postgres_data:
+  postgres_data: null
