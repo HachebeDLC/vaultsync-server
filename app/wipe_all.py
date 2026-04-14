@@ -17,8 +17,9 @@ def wipe_all():
         
         # 1. Delete ALL records from the database
         cursor.execute("DELETE FROM files")
+        cursor.execute("DELETE FROM romm_games")
         conn.commit()
-        print("  🗑️ Emptied database 'files' table.")
+        print("  🗑️ Emptied database 'files' and 'romm_games' tables.")
         
         # 2. Cleanup all physical files
         print("📁 Purging all physical files...")
