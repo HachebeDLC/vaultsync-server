@@ -157,7 +157,9 @@ async def upload_fragment(request: Request, background_tasks: BackgroundTasks, c
     Requires 'x-vaultsync-path' and 'x-vaultsync-offset' headers.
     """
     headers = request.headers
-    path = headers.get("x-vaultsync-path")
+    import urllib.parse
+    raw_path = headers.get("x-vaultsync-path")
+    path = urllib.parse.unquote(raw_path) if raw_path else None
     offset = int(headers.get("x-vaultsync-offset") or 0)
     if not path or not is_safe_path(current_user['id'], path):
         raise HTTPException(status_code=403)
@@ -197,6 +199,9 @@ async def finalize_upload(request: Request, body: FinalizeRequest, background_ta
     """
     Finalizes a file upload. Avoids reading the whole file if smart delta hashing can be used.
     """
+    import urllib.parse
+    body.path = urllib.parse.unquote(body.path)
+    
     user_id = current_user['id']
     if not is_safe_path(user_id, body.path):
         raise HTTPException(status_code=403)
@@ -299,6 +304,9 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
     """
     Manually triggers a reassembly and RomM push for a file.
     """
+    import urllib.parse
+    body.path = urllib.parse.unquote(body.path)
+    
     user_id = current_user['id']
     if not is_safe_path(user_id, body.path):
         raise HTTPException(status_code=403)
