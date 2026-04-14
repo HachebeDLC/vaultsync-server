@@ -92,6 +92,12 @@ def _create_tables(cursor) -> None:
             UNIQUE(user_id, romm_id)
         )
     ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_romm_games_user_id ON romm_games (user_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_romm_games_name ON romm_games USING gin(name gin_trgm_ops)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_romm_games_fs_name ON romm_games USING gin(fs_name gin_trgm_ops)')
+    
+    # We must ensure the pg_trgm extension is created for ILIKE performance
+    cursor.execute('CREATE EXTENSION IF NOT EXISTS pg_trgm')
 
 
 def _col_exists(cursor, table: str, column: str) -> bool:
