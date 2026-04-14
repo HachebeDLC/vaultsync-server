@@ -18,6 +18,20 @@ services:
     depends_on:
       - db
       - redis
+    labels:
+      - "ofelia.enabled=true"
+      - "ofelia.job-exec.update_master_db.schedule=@weekly"
+      - "ofelia.job-exec.update_master_db.command=python3 update_master_db.py"
+
+  ofelia:
+    image: mcuadros/ofelia:latest
+    container_name: vaultsync_ofelia
+    restart: unless-stopped
+    depends_on:
+      - vaultsync
+    command: daemon --docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
   db:
     image: postgres:15-alpine
