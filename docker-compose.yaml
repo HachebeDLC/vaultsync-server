@@ -22,7 +22,7 @@ services:
     labels:
       - "ofelia.enabled=true"
       - "ofelia.job-exec.update_master_db.schedule=@weekly"
-      - "ofelia.job-exec.update_master_db.command=python3 update_master_db.py"
+      - "ofelia.job-exec.update_master_db.command=python3 app/update_master_db.py"
 
   ofelia:
     image: mcuadros/ofelia:latest

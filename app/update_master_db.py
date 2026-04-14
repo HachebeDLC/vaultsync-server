@@ -2,7 +2,7 @@ import urllib.request
 import json
 import os
 
-ASSETS_DIR = os.path.join(os.path.dirname(__file__), "app", "assets")
+ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
 MASTER_DB_PATH = os.path.join(ASSETS_DIR, "master_title_db.json")
 
 def download_switch_db():
