@@ -1,10 +1,11 @@
+import os
 import requests
 import json
 import threading
 import time
 import sseclient # pip install sseclient-py
 
-BASE_URL = "http://localhost:5436"
+BASE_URL = os.environ.get("TEST_BASE_URL", "http://localhost:5436")
 
 def listen_for_events(user_token, stop_event, results):
     headers = {
@@ -24,8 +25,8 @@ def listen_for_events(user_token, stop_event, results):
             print(f"❌ SSE Error: {e}")
 
 def test_sse_broadcast():
-    email = "sse_test@example.com"
-    password = "password123"
+    email = os.environ.get("TEST_EMAIL", "sse_test@example.com")
+    password = os.environ.get("TEST_PASSWORD", "changeme_test_only")
     
     # 1. Register/Login
     print("1. Authenticating...")

@@ -2,11 +2,11 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
 
-DB_HOST = "localhost"
-DB_PORT = "5432" # Assuming you might have port forwarded or are running locally
-DB_NAME = "vaultsync"
-DB_USER = "vaultsync"
-DB_PASS = "vaultsync_secure_password"
+DB_HOST = os.environ.get("DB_HOST", "localhost")
+DB_PORT = os.environ.get("DB_PORT", "5432")
+DB_NAME = os.environ.get("DB_NAME", "vaultsync")
+DB_USER = os.environ.get("DB_USER", "vaultsync")
+DB_PASS = os.environ.get("DB_PASS", "")
 
 def check_files():
     try:

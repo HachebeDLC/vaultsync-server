@@ -43,103 +43,107 @@ def get_db():
     finally:
         pool_obj.putconn(conn)
 
+def _create_tables(cursor) -> None:
+    """Create all tables if they do not already exist."""
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            username TEXT,
+            salt TEXT,
+            recovery_payload TEXT,
+            recovery_salt TEXT,
+            created_at BIGINT
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS files (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id),
+            path TEXT NOT NULL,
+            hash TEXT,
+            size BIGINT,
+            updated_at BIGINT,
+            device_name TEXT,
+            blocks JSONB,
+            UNIQUE(user_id, path)
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS refresh_tokens (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            token TEXT UNIQUE NOT NULL,
+            expires_at BIGINT NOT NULL,
+            created_at BIGINT NOT NULL,
+            revoked BOOLEAN DEFAULT FALSE
+        )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_refresh_token ON refresh_tokens (token)')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS romm_games (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            romm_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            fs_name TEXT,
+            platform_slug TEXT,
+            UNIQUE(user_id, romm_id)
+        )
+    ''')
+
+
+def _col_exists(cursor, table: str, column: str) -> bool:
+    cursor.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name=%s AND column_name=%s",
+        (table, column),
+    )
+    return cursor.fetchone() is not None
+
+
+def _run_migrations(cursor) -> None:
+    """Apply all pending schema migrations (idempotent)."""
+    # Drop vestigial encryption_key (key is derived client-side via PBKDF2)
+    if _col_exists(cursor, "users", "encryption_key"):
+        logger.info("Migrating: Dropping unused 'encryption_key' from 'users'")
+        cursor.execute("ALTER TABLE users DROP COLUMN encryption_key")
+
+    if not _col_exists(cursor, "users", "salt"):
+        logger.info("Migrating: Adding 'salt' to 'users'")
+        cursor.execute("ALTER TABLE users ADD COLUMN salt TEXT")
+
+    if not _col_exists(cursor, "users", "recovery_payload"):
+        logger.info("Migrating: Adding recovery columns to 'users'")
+        cursor.execute("ALTER TABLE users ADD COLUMN recovery_payload TEXT")
+        cursor.execute("ALTER TABLE users ADD COLUMN recovery_salt TEXT")
+
+    if not _col_exists(cursor, "users", "romm_url"):
+        logger.info("Migrating: Adding RomM columns to 'users'")
+        cursor.execute("ALTER TABLE users ADD COLUMN romm_url TEXT")
+        cursor.execute("ALTER TABLE users ADD COLUMN romm_api_key TEXT")
+
+    # Migrate files.blocks TEXT → JSONB
+    cursor.execute(
+        "SELECT data_type FROM information_schema.columns WHERE table_name='files' AND column_name='blocks'"
+    )
+    col = cursor.fetchone()
+    if col and col[0].lower() == "text":
+        logger.info("Migrating: Converting files.blocks from TEXT to JSONB")
+        cursor.execute("""
+            ALTER TABLE files
+            ALTER COLUMN blocks TYPE JSONB
+            USING CASE WHEN blocks IS NULL OR blocks = '' THEN NULL ELSE blocks::jsonb END
+        """)
+
+
 def init_db():
     """Initializes the database schema with migration guards."""
     try:
         with get_db() as conn:
             cursor = conn.cursor()
-            
-            # Users table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS users (
-                    id SERIAL PRIMARY KEY,
-                    email TEXT UNIQUE NOT NULL,
-                    password_hash TEXT NOT NULL,
-                    username TEXT,
-                    salt TEXT,
-                    recovery_payload TEXT,
-                    recovery_salt TEXT,
-                    created_at BIGINT
-                )
-            ''')
-            
-            # Migration: drop vestigial encryption_key column (key is derived client-side via PBKDF2)
-            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='encryption_key'")
-            if cursor.fetchone():
-                logger.info("Migrating: Dropping unused 'encryption_key' from 'users'")
-                cursor.execute("ALTER TABLE users DROP COLUMN encryption_key")
-
-            # Migration check: salt column
-            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='salt'")
-            if not cursor.fetchone():
-                logger.info("Migrating: Adding 'salt' to 'users'")
-                cursor.execute("ALTER TABLE users ADD COLUMN salt TEXT")
-                
-            # Migration check: recovery columns
-            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='recovery_payload'")
-            if not cursor.fetchone():
-                logger.info("Migrating: Adding recovery columns to 'users'")
-                cursor.execute("ALTER TABLE users ADD COLUMN recovery_payload TEXT")
-                cursor.execute("ALTER TABLE users ADD COLUMN recovery_salt TEXT")
-
-            # Migration check: RomM columns
-            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='romm_url'")
-            if not cursor.fetchone():
-                logger.info("Migrating: Adding RomM columns to 'users'")
-                cursor.execute("ALTER TABLE users ADD COLUMN romm_url TEXT")
-                cursor.execute("ALTER TABLE users ADD COLUMN romm_api_key TEXT")
-            
-            # Files table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS files (
-                    id SERIAL PRIMARY KEY,
-                    user_id INTEGER REFERENCES users(id),
-                    path TEXT NOT NULL,
-                    hash TEXT,
-                    size BIGINT,
-                    updated_at BIGINT,
-                    device_name TEXT,
-                    blocks JSONB,
-                    UNIQUE(user_id, path)
-                )
-            ''')
-
-            # Migration: blocks TEXT -> JSONB
-            cursor.execute("SELECT data_type FROM information_schema.columns WHERE table_name='files' AND column_name='blocks'")
-            col = cursor.fetchone()
-            if col and col[0].lower() == 'text':
-                logger.info("Migrating: Converting files.blocks from TEXT to JSONB")
-                cursor.execute("""
-                    ALTER TABLE files
-                    ALTER COLUMN blocks TYPE JSONB
-                    USING CASE WHEN blocks IS NULL OR blocks = '' THEN NULL ELSE blocks::jsonb END
-                """)
-
-            # Refresh Tokens table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS refresh_tokens (
-                    id SERIAL PRIMARY KEY,
-                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                    token TEXT UNIQUE NOT NULL,
-                    expires_at BIGINT NOT NULL,
-                    created_at BIGINT NOT NULL,
-                    revoked BOOLEAN DEFAULT FALSE
-                )
-            ''')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_refresh_token ON refresh_tokens (token)')
-            
-            # RomM Games Cache
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS romm_games (
-                    id SERIAL PRIMARY KEY,
-                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                    romm_id INTEGER NOT NULL,
-                    name TEXT NOT NULL,
-                    fs_name TEXT,
-                    platform_slug TEXT,
-                    UNIQUE(user_id, romm_id)
-                )
-            ''')
+            _create_tables(cursor)
+            _run_migrations(cursor)
             conn.commit()
             logger.info("✅ Database schema is up to date")
     except Exception as e:

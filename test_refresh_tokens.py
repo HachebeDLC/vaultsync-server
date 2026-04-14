@@ -1,11 +1,12 @@
+import os
 import requests
 import sys
 
-BASE_URL = "http://localhost:5436"
+BASE_URL = os.environ.get("TEST_BASE_URL", "http://localhost:5436")
 
 def test_auth_flow():
-    email = "test_refresh@example.com"
-    password = "password123"
+    email = os.environ.get("TEST_EMAIL", "test_refresh@example.com")
+    password = os.environ.get("TEST_PASSWORD", "changeme_test_only")
     
     # 1. Register
     print("1. Registering...")

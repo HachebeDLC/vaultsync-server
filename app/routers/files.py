@@ -397,7 +397,12 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
             
             # 2. Sequential execution block for RomM operations
             async with romm_push_lock:
-                # A. Local RomM Match
+                # A. Safety Bypass for PS2 Memory Card Blobs
+                if body.path.lower().endswith('.ps2'):
+                    logger.info(f"Skipping RomM push for PS2 Memory Card Blob ({body.path}). Cannot link multi-game blobs to single RomM entries.")
+                    return
+
+                # B. Local RomM Match
                 from ..services.title_db_service import title_db
                 import re
                 import os
@@ -421,14 +426,28 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
                 target_id = None
                 target_name = parts[-1]
                 
+                # Smart Path Parsing
+                filename = parts[-1]
+                
                 if platform in ('switch', 'eden') and len(parts) >= 3:
-                    target_id = parts[1].upper()
+                    # switch/01007300020FA000/system.sav -> ID is 01007300020FA000
+                    # check if parts[1] is a 16-char hex
+                    if len(parts[1]) == 16:
+                        target_id = parts[1].upper()
+                elif platform in ('psp', 'ppsspp') and len(parts) >= 3 and parts[1].upper() == 'SAVEDATA':
+                    target_id = parts[2].upper()
+                elif platform == '3ds' and len(parts) >= 3 and parts[1].lower() == 'saves':
+                    target_id = parts[2].upper()
                 elif platform in ('gc', 'dolphin', 'wii') and len(parts) >= 2:
-                    target_id = parts[1].split('.')[0].upper()
-                elif platform in ('psp', 'ppsspp') and len(parts) >= 3 and parts[1] == 'SAVEDATA':
-                    target_id = parts[2].upper()
-                elif platform == '3ds' and len(parts) >= 3 and parts[1] == 'saves':
-                    target_id = parts[2].upper()
+                    # If it's a native GameCube/Wii save, it's usually at the root or ends in .gci
+                    if filename.lower().endswith('.gci'):
+                        target_id = filename.split('.')[0].upper()
+                    elif len(parts) == 2 and not filename.lower().endswith('.srm'):
+                        target_id = filename.split('.')[0].upper()
+                
+                # If target_id was accidentally set to a folder name like "GBA", unset it
+                if target_id and target_id in ('GBA', 'SNES', 'NES', 'N64', 'NDS', 'SAVES', 'STATES'):
+                    target_id = None
 
                 translated_name = None
                 if target_id:

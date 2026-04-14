@@ -201,26 +201,37 @@ def find_romm_game_for_user(conn, user_id: int, target_id: str, target_name: str
     if target_id:
         query = "SELECT romm_id, name FROM romm_games WHERE user_id = %s AND (name ILIKE %s OR fs_name ILIKE %s)"
         params = [user_id, f'%{target_id}%', f'%{target_id}%']
-        if platform_slug:
-            query += " AND platform_slug = %s"
-            params.append(platform_slug)
-        query += " LIMIT 1"
         
-        cursor.execute(query, tuple(params))
+        if platform_slug:
+            platform_query = query + " AND platform_slug = %s LIMIT 1"
+            platform_params = params + [platform_slug]
+            cursor.execute(platform_query, tuple(platform_params))
+            res = cursor.fetchone()
+            if res: return res['romm_id']
+            
+        fallback_query = query + " LIMIT 1"
+        cursor.execute(fallback_query, tuple(params))
         res = cursor.fetchone()
         if res: return res['romm_id']
         
     # 2. Fuzzy Name Match
     if target_name:
         clean_target = target_name.lower().strip()
+        
         query = "SELECT romm_id, name FROM romm_games WHERE user_id = %s AND (name ILIKE %s OR fs_name ILIKE %s)"
         params = [user_id, f'%{clean_target}%', f'%{clean_target}%']
-        if platform_slug:
-            query += " AND platform_slug = %s"
-            params.append(platform_slug)
-        query += " LIMIT 1"
         
-        cursor.execute(query, tuple(params))
+        if platform_slug:
+            platform_query = query + " AND platform_slug = %s LIMIT 1"
+            platform_params = params + [platform_slug]
+            cursor.execute(platform_query, tuple(platform_params))
+            res = cursor.fetchone()
+            if res: return res['romm_id']
+        
+        # Fallback: search across all platforms if platform-specific failed or wasn't provided
+        # (Handles cases like GBA games being played on a GameCube emulator)
+        fallback_query = query + " LIMIT 1"
+        cursor.execute(fallback_query, tuple(params))
         res = cursor.fetchone()
         if res: return res['romm_id']
         

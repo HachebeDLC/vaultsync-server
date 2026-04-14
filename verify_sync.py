@@ -58,92 +58,96 @@ def decrypt_block(block_data, key_bytes, use_padding=True):
     except Exception:
         return None
 
-def run_verify(base_url, email, password, remote_path):
-    print(f"🚀 Connecting to VaultSync at {base_url}...")
+def _login(base_url, email, password):
+    """Authenticate and return a bearer token, or None on failure."""
     try:
         resp = requests.post(f"{base_url}/login", json={"email": email, "password": password})
         resp.raise_for_status()
-        token = resp.json()['token']
         print("🔑 Login Successful")
+        return resp.json()['token']
     except Exception as e:
         print(f"❌ Auth failed: {e}")
-        return
+        return None
 
+
+def _download(base_url, token, remote_path):
+    """Download raw bytes for *remote_path*, or None on failure."""
     print(f"📥 Downloading {remote_path}...")
     headers = {"Authorization": f"Bearer {token}"}
     try:
         resp = requests.post(f"{base_url}/api/v1/download", json={"filename": remote_path}, headers=headers)
         resp.raise_for_status()
-        raw_data = resp.content
-        print(f"📦 Downloaded {len(raw_data)} bytes")
+        print(f"📦 Downloaded {len(resp.content)} bytes")
+        return resp.content
     except Exception as e:
         print(f"❌ Download failed: {e}")
-        return
+        return None
 
-    # Try Key Derivations
-    key_pbkdf2 = derive_master_key_pbkdf2(password, email)
-    key_legacy = derive_master_key_legacy(password, email)
-    
-    print(f"🕵️ Testing Key Derivations...")
-    
-    # Peek at first block
-    first_block_size = min(ENCRYPTED_BLOCK_SIZE, len(raw_data))
-    first_block = raw_data[:first_block_size]
-    
-    active_key = None
-    
-    # 1. Try PBKDF2
-    res = decrypt_block(first_block, key_pbkdf2)
-    if res:
+
+def _resolve_key(first_block, key_pbkdf2, key_legacy):
+    """Return the active decryption key, or None if neither matches."""
+    if decrypt_block(first_block, key_pbkdf2):
         print("✅ Key Match Found: PBKDF2 (New Standard)")
-        active_key = key_pbkdf2
-    else:
-        # 2. Try Legacy
-        res = decrypt_block(first_block, key_legacy)
-        if res:
-            print("⚠️ Key Match Found: Legacy SHA-256 (Old Format)")
-            active_key = key_legacy
-        else:
-            print("❌ Error: Could not decrypt first block with either key.")
-            print("   Possible causes: Wrong password/email, or file is corrupted.")
-            # Deep Diagnostic: Try to decrypt without padding to see what the data looks like
-            raw_dec = decrypt_block(first_block, key_pbkdf2, use_padding=False)
-            if raw_dec:
-                print(f"   Diagnostic Peek (PBKDF2): {raw_dec[:32].hex()}...")
-            return
+        return key_pbkdf2
+    if decrypt_block(first_block, key_legacy):
+        print("⚠️ Key Match Found: Legacy SHA-256 (Old Format)")
+        return key_legacy
+    print("❌ Error: Could not decrypt first block with either key.")
+    print("   Possible causes: Wrong password/email, or file is corrupted.")
+    raw_dec = decrypt_block(first_block, key_pbkdf2, use_padding=False)
+    if raw_dec:
+        print(f"   Diagnostic Peek (PBKDF2): {raw_dec[:32].hex()}...")
+    return None
 
-    # Full Decryption
-    print(f"🔓 Decrypting file...")
+
+def _decrypt_all_blocks(raw_data, active_key):
+    """Decrypt all blocks and return plaintext bytearray."""
     output_data = bytearray()
     offset = 0
     block_num = 0
-    
     while offset < len(raw_data):
         remaining = len(raw_data) - offset
-        # We need to find the magic to handle variable sized blocks if any
         if raw_data[offset : offset + MAGIC_SIZE] != MAGIC:
             print(f"❌ Critical: Magic mismatch at block {block_num} (offset {offset})")
             break
-            
-        # Determine this block's total size (9 + 16 + payload + padding)
-        # For our protocol, every block is ENCRYPTED_BLOCK_SIZE except maybe the last
         current_block_size = min(ENCRYPTED_BLOCK_SIZE, remaining)
-        
-        block = raw_data[offset : offset + current_block_size]
-        plain = decrypt_block(block, active_key)
-        
+        plain = decrypt_block(raw_data[offset : offset + current_block_size], active_key)
         if plain is None:
             print(f"❌ Decryption failed at block {block_num}")
             break
-            
         output_data.extend(plain)
         offset += current_block_size
         block_num += 1
+    return output_data
+
+
+def run_verify(base_url, email, password, remote_path):
+    print(f"🚀 Connecting to VaultSync at {base_url}...")
+    token = _login(base_url, email, password)
+    if not token:
+        return
+
+    raw_data = _download(base_url, token, remote_path)
+    if raw_data is None:
+        return
+
+    print("🕵️ Testing Key Derivations...")
+    first_block = raw_data[:min(ENCRYPTED_BLOCK_SIZE, len(raw_data))]
+    active_key = _resolve_key(
+        first_block,
+        derive_master_key_pbkdf2(password, email),
+        derive_master_key_legacy(password, email),
+    )
+    if not active_key:
+        return
+
+    print("🔓 Decrypting file...")
+    output_data = _decrypt_all_blocks(raw_data, active_key)
 
     output_filename = "pc_verified_" + os.path.basename(remote_path)
     with open(output_filename, "wb") as f:
         f.write(output_data)
-    
+
     print(f"✅ VERIFICATION COMPLETE")
     print(f"📄 Saved to: {output_filename}")
     print(f"📊 Final Plain Size: {len(output_data)} bytes")
