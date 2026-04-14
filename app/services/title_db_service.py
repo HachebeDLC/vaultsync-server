@@ -52,24 +52,26 @@ class TitleDBService:
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                # Handle 3DS eShop DB structure (nested by region)
-                if isinstance(data, dict):
+                
+                # Format 1: [{Name: "...", TitleID: "..."}] (hax0kartik/3dsdb)
+                if isinstance(data, list):
+                    for item in data:
+                        name = item.get('Name') or item.get('name')
+                        tid = item.get('TitleID') or item.get('titleId')
+                        if name and tid:
+                            self.db[str(tid).upper()] = name
+                            
+                # Format 2: Nested regions (the other one)
+                elif isinstance(data, dict):
                     for region in data.values():
                         if isinstance(region, list):
                             for item in region:
                                 name = item.get('name')
-                                # TitleID for 3DS is often in 'id' but might be prefixed
-                                # e.g. 50010000039739 -> We need the last 8 or 16
                                 tid = item.get('id')
                                 if name and tid:
                                     self.db[str(tid).upper()] = name
-                                # Also check 'code' (Serial)
-                                code = item.get('code')
-                                if name and code:
-                                    self.db[str(code).upper()] = name
         except Exception as e:
             logger.error(f"Failed to load JSON {path}: {str(e)}")
-
     def translate(self, identifier: str) -> Optional[str]:
         """Translates a TitleID or Serial to a Game Name."""
         if not identifier: return None
