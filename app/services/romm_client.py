@@ -57,33 +57,40 @@ class RomMClient:
 
     async def upload_save(self, rom_id: int, file_path: str, device_id: str = "NeoSync"):
         """
-        Uploads a reassembled save file to RomM.
+        Uploads a raw decrypted save file directly to RomM.
         """
         if not self.api_key:
             return False
 
         try:
+            filename = os.path.basename(file_path)
+            
+            # Determine if it's a save state to use RomM's slot system
+            params = {
+                "rom_id": rom_id,
+                "device_id": device_id,
+                "overwrite": "true"
+            }
+            
+            if ".state" in filename.lower():
+                params["slot"] = "state_auto" if "auto" in filename.lower() else "state_manual"
+
             async with httpx.AsyncClient() as client:
                 with open(file_path, "rb") as f:
-                    files = {"saveFile": (os.path.basename(file_path), f, "application/zip")}
+                    # Send the raw file, not a zip!
+                    files = {"saveFile": (filename, f, "application/octet-stream")}
                     resp = await client.post(
                         f"{self.base_url}/api/saves",
-                        params={
-                            "rom_id": rom_id,
-                            "device_id": device_id,
-                            "overwrite": "true"
-                        },
+                        params=params,
                         files=files,
                         headers=self.headers,
                         timeout=60.0
                     )
                     if resp.status_code in (200, 201):
-                        logger.info(f"Successfully uploaded save to RomM for ROM {rom_id}")
+                        logger.info(f"Successfully uploaded {filename} to RomM for ROM {rom_id}")
                         return True
                     else:
                         logger.error(f"RomM upload failed: {resp.status_code} - {resp.text}")
         except Exception as e:
             logger.error(f"RomM upload error: {str(e)}")
         return False
-
-romm_client = RomMClient()

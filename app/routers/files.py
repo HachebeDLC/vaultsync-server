@@ -284,7 +284,10 @@ async def finalize_upload(request: Request, body: FinalizeRequest, background_ta
 
     if romm_key:
         logger.info(f"Triggering automatic RomM sync for {body.path}")
-        await romm_sync(RomMSyncRequest(path=body.path, key=romm_key), background_tasks, current_user)
+        try:
+            await romm_sync(RomMSyncRequest(path=body.path, key=romm_key), background_tasks, current_user)
+        except Exception as e:
+            logger.error(f"Automatic RomM sync failed for {body.path}: {e}")
 
     return {"message": "Finalized"}
 
@@ -326,6 +329,7 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
         logger.error(f"Base64 decode failed: {str(e)}")
         raise HTTPException(status_code=400, detail="Invalid key format (base64Url expected)")
         
+    raw_key = raw_key[:32]
     if len(raw_key) != 32:
         raise HTTPException(status_code=400, detail="Invalid key length (32 bytes expected for AES-256)")
 
@@ -351,17 +355,14 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
                 safe_path, output_path, raw_key, metadata['size']
             )
             
-            # 2. Zip it (RomM likes zips)
-            await asyncio.to_thread(reassembly_service.zip_file, output_path, zip_path)
-            
-            # 3. Find RomM ID
+            # 2. Find RomM ID
             rom_id = await target_client.get_rom_id_by_path(body.path)
             if not rom_id:
                 logger.error(f"Could not find RomM ID for {body.path} on {target_client.base_url}")
                 return
 
-            # 4. Push to RomM
-            success = await target_client.upload_save(rom_id, zip_path, device_id=f"NeoSync-{metadata.get('device_name', 'Unknown')}")
+            # 3. Push raw file to RomM
+            success = await target_client.upload_save(rom_id, output_path, device_id=f"NeoSync-{metadata.get('device_name', 'Unknown')}")
             if success:
                 logger.info(f"Successfully synced {body.path} to RomM ID {rom_id}")
             
@@ -369,10 +370,11 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
             logger.error(f"RomM Sync failed for {body.path}: {str(e)}")
         finally:
             if os.path.exists(output_path): os.remove(output_path)
-            if os.path.exists(zip_path): os.remove(zip_path)
 
     background_tasks.add_task(_do_sync)
     return {"message": "RomM sync task queued"}
+
+@router.delete("/files")
 @router.delete("/files")
 async def delete_file(body: FileRequest, background_tasks: BackgroundTasks, current_user = Depends(get_current_user)):
     """
