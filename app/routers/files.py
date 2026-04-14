@@ -12,6 +12,10 @@ from ..services.event_notifier import event_notifier
 from ..database import get_db
 from ..models import FileRequest, RestoreRequest, BlockCheckRequest, BlockDownloadRequest, FinalizeRequest, RomMSyncRequest
 from ..dependencies import get_current_user
+import asyncio
+# Global lock for RomM API rate limiting
+romm_push_lock = asyncio.Lock()
+
 from ..services.reassembly_service import reassembly_service
 from ..services.romm_client import romm_client, RomMClient
 from ..utils import is_safe_path, calculate_file_hash_and_blocks
@@ -357,31 +361,33 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
 
     async def _do_sync():
         try:
-            # 1. Reassemble
+            # 1. Reassemble locally (can be parallel)
             await asyncio.to_thread(
                 reassembly_service.reassemble_file, 
                 safe_path, output_path, raw_key, metadata['size']
             )
             
-            # 2. Add a small jitter/delay to prevent DDOSing RomM during mass syncs
-            # We wait 1 second per task to spread out the API hits
-            await asyncio.sleep(1.0)
+            # 2. Sequential execution block for RomM operations
+            async with romm_push_lock:
+                # A. Find RomM ID
+                rom_id = await target_client.get_rom_id_by_path(body.path)
+                if not rom_id:
+                    logger.error(f"Could not find RomM ID for {body.path} on {target_client.base_url}")
+                    return
 
-            # 3. Find RomM ID
-            rom_id = await target_client.get_rom_id_by_path(body.path)
-            if not rom_id:
-                logger.error(f"Could not find RomM ID for {body.path} on {target_client.base_url}")
-                return
-
-            # 4. Push raw file to RomM
-            success = await target_client.upload_save(rom_id, output_path, device_id=f"NeoSync-{metadata.get('device_name', 'Unknown')}")
-            if success:
-                logger.info(f"Successfully synced {body.path} to RomM ID {rom_id}")
+                # B. Push raw file to RomM
+                success = await target_client.upload_save(rom_id, output_path, device_id=f"NeoSync-{metadata.get('device_name', 'Unknown')}")
+                if success:
+                    logger.info(f"Successfully synced {body.path} to RomM ID {rom_id}")
+                
+                # C. Mandatory cool-down before releasing lock to next task
+                await asyncio.sleep(1.5)
             
         except Exception as e:
             logger.error(f"RomM Sync failed for {body.path}: {str(e)}")
         finally:
             if os.path.exists(output_path): os.remove(output_path)
+
     background_tasks.add_task(_do_sync)
     return {"message": "RomM sync task queued"}
 
