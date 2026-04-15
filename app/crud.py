@@ -194,13 +194,14 @@ def sync_user_romm_library(conn, user_id: int, games_list: list):
     execute_values(cursor, query, data)
 
 def find_romm_game_for_user(conn, user_id: int, target_id: str, target_name: str, platform_slug: str = None):
-    """Searches the user's localized RomM library for a match."""
+    """Searches the RomM library for a match (Global library, not strictly per-user)."""
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     
     # 1. Exact ID Match (for Switch, GC, PSP)
     if target_id:
-        query = "SELECT romm_id, name FROM romm_games WHERE user_id = %s AND (name ILIKE %s OR fs_name ILIKE %s)"
-        params = [user_id, f'%{target_id}%', f'%{target_id}%']
+        # Removed strict user_id check to allow global library matching
+        query = "SELECT romm_id, name FROM romm_games WHERE (name ILIKE %s OR fs_name ILIKE %s)"
+        params = [f'%{target_id}%', f'%{target_id}%']
         
         if platform_slug:
             platform_query = query + " AND platform_slug = %s LIMIT 1"
@@ -218,8 +219,9 @@ def find_romm_game_for_user(conn, user_id: int, target_id: str, target_name: str
     if target_name:
         clean_target = target_name.lower().strip()
         
-        query = "SELECT romm_id, name FROM romm_games WHERE user_id = %s AND (name ILIKE %s OR fs_name ILIKE %s)"
-        params = [user_id, f'%{clean_target}%', f'%{clean_target}%']
+        # Removed strict user_id check to allow global library matching
+        query = "SELECT romm_id, name FROM romm_games WHERE (name ILIKE %s OR fs_name ILIKE %s)"
+        params = [f'%{clean_target}%', f'%{clean_target}%']
         
         if platform_slug:
             platform_query = query + " AND platform_slug = %s LIMIT 1"
