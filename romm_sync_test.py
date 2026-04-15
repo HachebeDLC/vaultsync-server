@@ -208,63 +208,77 @@ async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=No
 
             client = RomMClient(base_url=romm_url, api_key=romm_api_key) if romm_url and romm_api_key else None
             
-            # Fetch all games from RomM via API
-            romm_games = []
-            if client:
-                logger.info("Fetching library from RomM API for matching...")
+            # 2.5 Optional: Sync RomM Library to local DB
+            if args.sync_library and client:
+                logger.info("Syncing RomM library to local database...")
                 try:
                     import httpx
-                    headers = {
-                        "Authorization": f"Bearer {romm_api_key}",
-                        "Accept": "application/json"
-                    }
-                    # We need to fetch all platforms and their games.
-                    # As a simpler approach, we can hit the /api/library/games endpoint if it exists
-                    # Or we can just use the provided crud.find_romm_game_for_user which we discovered is broken.
-                    # Let's fix the find_romm_game_for_user equivalent logic here using httpx to hit RomM API.
+                    headers = {"Authorization": f"Bearer {romm_api_key}", "Accept": "application/json"}
+                    with httpx.Client(base_url=romm_url, verify=False, timeout=60.0) as http:
+                        resp = http.get("/api/library/games?limit=5000", headers=headers)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            games = data.get('data', data) if isinstance(data, dict) else data
+                            
+                            cursor = conn.cursor()
+                            # Clear old entries for this user to avoid duplicates if ID changes
+                            cursor.execute("DELETE FROM romm_games WHERE user_id = %s", (user_id,))
+                            
+                            for g in games:
+                                platform_data = g.get('platform') or {}
+                                p_slug = g.get('platform_slug') or platform_data.get('slug')
+                                cursor.execute("""
+                                    INSERT INTO romm_games (user_id, romm_id, name, fs_name, platform_slug)
+                                    VALUES (%s, %s, %s, %s, %s)
+                                    ON CONFLICT (user_id, romm_id) DO UPDATE SET
+                                        name = EXCLUDED.name,
+                                        fs_name = EXCLUDED.fs_name,
+                                        platform_slug = EXCLUDED.platform_slug
+                                """, (user_id, g['id'], g['name'], g.get('file_name'), p_slug))
+                            conn.commit()
+                            logger.info(f"✅ Successfully cached {len(games)} games in local database.")
+                        else:
+                            logger.error(f"Failed to fetch library: HTTP {resp.status_code}")
+                except Exception as e:
+                    logger.error(f"Library sync failed: {e}")
+
+            # Fetch all games from RomM via API for fallback matching
+            romm_games_api = []
+            def load_api_library():
+                nonlocal romm_games_api
+                if romm_games_api: return
+                logger.info("Fetching library from RomM API for fallback matching...")
+                try:
+                    import httpx
+                    headers = {"Authorization": f"Bearer {romm_api_key}", "Accept": "application/json"}
                     with httpx.Client(base_url=romm_url, verify=False, timeout=30.0) as http:
                         resp = http.get("/api/library/games?limit=5000", headers=headers)
                         if resp.status_code == 200:
-                            romm_games = resp.json()
-                            if 'data' in romm_games: # Handle paginated responses if applicable
-                                romm_games = romm_games['data']
-                            logger.info(f"Loaded {len(romm_games)} games from RomM API")
-                        else:
-                            logger.error(f"Failed to fetch RomM library: HTTP {resp.status_code}")
-                except Exception as e:
-                    logger.error(f"Failed to load RomM library: {e}")
+                            data = resp.json()
+                            romm_games_api = data.get('data', data) if isinstance(data, dict) else data
+                except Exception: pass
 
             def find_romm_game(title_id, game_name, platform_slug):
-                if not romm_games: return None
-                
-                # 1. Exact ID Match (RomM stores filenames and hashes, title_id is often in filename)
-                if title_id:
-                    for g in romm_games:
-                        # Check name, filename, and rom hash/id if available
-                        g_name = g.get('name', '').lower()
-                        f_name = g.get('file_name', '').lower()
-                        p_slug = g.get('platform_slug', g.get('platform', {}).get('slug', '')).lower()
-                        
-                        if platform_slug and platform_slug.lower() not in p_slug:
-                            continue
-                            
-                        if title_id.lower() in g_name or title_id.lower() in f_name:
-                            return g.get('id')
+                # 1. Try Local DB (Primary)
+                try:
+                    res = crud.find_romm_game_for_user(conn, user_id, title_id, game_name, platform_slug)
+                    if res: return res
+                except Exception: pass
 
-                # 2. Fuzzy Name Match
+                # 2. Try API (Fallback)
+                if not client: return None
+                load_api_library()
+                
+                # Matching Logic for API results
+                if title_id:
+                    for g in romm_games_api:
+                        if title_id.lower() in g.get('name', '').lower() or title_id.lower() in g.get('file_name', '').lower():
+                            return g.get('id')
                 if game_name:
                     clean_target = clean_game_name(game_name).lower()
-                    for g in romm_games:
-                        g_name = g.get('name', '').lower()
-                        f_name = g.get('file_name', '').lower()
-                        p_slug = g.get('platform_slug', g.get('platform', {}).get('slug', '')).lower()
-                        
-                        if platform_slug and platform_slug.lower() not in p_slug:
-                            continue
-                            
-                        if clean_target in g_name or clean_target in f_name:
+                    for g in romm_games_api:
+                        if clean_target in g.get('name', '').lower() or clean_target in g.get('file_name', '').lower():
                             return g.get('id')
-                            
                 return None
 
             files, _ = crud.list_user_files(conn, user_id, limit=3000)
@@ -388,5 +402,6 @@ if __name__ == "__main__":
     parser.add_argument("--push", action="store_true")
     parser.add_argument("--romm-url")
     parser.add_argument("--romm-key")
+    parser.add_argument("--sync-library", action="store_true", help="Sync library from RomM API into local database before matching")
     args = parser.parse_args()
     asyncio.run(match_saves(args.email, args.key, not args.push, args.romm_url, args.romm_key))
