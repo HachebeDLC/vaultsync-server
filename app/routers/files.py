@@ -1,6 +1,9 @@
 import os
 import logging
 import asyncio
+import re
+# Global lock for RomM API rate limiting
+romm_push_lock = asyncio.Lock()
 import aiofiles
 import hashlib
 from typing import List, Optional
@@ -12,12 +15,11 @@ from ..services.event_notifier import event_notifier
 from ..database import get_db
 from ..models import FileRequest, RestoreRequest, BlockCheckRequest, BlockDownloadRequest, FinalizeRequest, RomMSyncRequest
 from ..dependencies import get_current_user
-import asyncio
-# Global lock for RomM API rate limiting
-romm_push_lock = asyncio.Lock()
+
 
 from ..services.reassembly_service import reassembly_service
 from ..services.romm_client import romm_client, RomMClient
+from ..services.title_db_service import title_db
 from ..utils import is_safe_path, calculate_file_hash_and_blocks
 from ..services.version_manager import version_manager
 from .. import crud
@@ -403,11 +405,6 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
                     return
 
                 # B. Local RomM Match
-                from ..services.title_db_service import title_db
-                import re
-                import os
-                from ..database import get_db
-                from .. import crud
                 
                 parts = body.path.split("/")
                 platform = parts[0].lower()
@@ -503,7 +500,6 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
     background_tasks.add_task(_do_sync)
     return {"message": "RomM sync task queued"}
 
-@router.delete("/files")
 @router.delete("/files")
 async def delete_file(body: FileRequest, background_tasks: BackgroundTasks, current_user = Depends(get_current_user)):
     """
