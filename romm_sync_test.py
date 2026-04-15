@@ -207,6 +207,65 @@ async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=No
                 return
 
             client = RomMClient(base_url=romm_url, api_key=romm_api_key) if romm_url and romm_api_key else None
+            
+            # Fetch all games from RomM via API
+            romm_games = []
+            if client:
+                logger.info("Fetching library from RomM API for matching...")
+                try:
+                    import httpx
+                    headers = {
+                        "Authorization": f"Bearer {romm_api_key}",
+                        "Accept": "application/json"
+                    }
+                    # We need to fetch all platforms and their games.
+                    # As a simpler approach, we can hit the /api/library/games endpoint if it exists
+                    # Or we can just use the provided crud.find_romm_game_for_user which we discovered is broken.
+                    # Let's fix the find_romm_game_for_user equivalent logic here using httpx to hit RomM API.
+                    with httpx.Client(base_url=romm_url, verify=False, timeout=30.0) as http:
+                        resp = http.get("/api/library/games?limit=5000", headers=headers)
+                        if resp.status_code == 200:
+                            romm_games = resp.json()
+                            if 'data' in romm_games: # Handle paginated responses if applicable
+                                romm_games = romm_games['data']
+                            logger.info(f"Loaded {len(romm_games)} games from RomM API")
+                        else:
+                            logger.error(f"Failed to fetch RomM library: HTTP {resp.status_code}")
+                except Exception as e:
+                    logger.error(f"Failed to load RomM library: {e}")
+
+            def find_romm_game(title_id, game_name, platform_slug):
+                if not romm_games: return None
+                
+                # 1. Exact ID Match (RomM stores filenames and hashes, title_id is often in filename)
+                if title_id:
+                    for g in romm_games:
+                        # Check name, filename, and rom hash/id if available
+                        g_name = g.get('name', '').lower()
+                        f_name = g.get('file_name', '').lower()
+                        p_slug = g.get('platform_slug', g.get('platform', {}).get('slug', '')).lower()
+                        
+                        if platform_slug and platform_slug.lower() not in p_slug:
+                            continue
+                            
+                        if title_id.lower() in g_name or title_id.lower() in f_name:
+                            return g.get('id')
+
+                # 2. Fuzzy Name Match
+                if game_name:
+                    clean_target = clean_game_name(game_name).lower()
+                    for g in romm_games:
+                        g_name = g.get('name', '').lower()
+                        f_name = g.get('file_name', '').lower()
+                        p_slug = g.get('platform_slug', g.get('platform', {}).get('slug', '')).lower()
+                        
+                        if platform_slug and platform_slug.lower() not in p_slug:
+                            continue
+                            
+                        if clean_target in g_name or clean_target in f_name:
+                            return g.get('id')
+                            
+                return None
 
             files, _ = crud.list_user_files(conn, user_id, limit=3000)
             logger.info(f"Found {len(files)} files for user {user_email}")
@@ -248,14 +307,15 @@ async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=No
 
                 g['game_name'] = game_name
                 
-                # Match in RomM
-                romm_id = crud.find_romm_game_for_user(conn, user_id, g['title_id'], game_name, g['platform'])
+                # Match against live RomM data
+                romm_id = find_romm_game(g['title_id'], game_name, g['platform'])
                 if not romm_id and game_name:
                     cleaned = clean_game_name(game_name)
                     if cleaned != game_name:
-                        romm_id = crud.find_romm_game_for_user(conn, user_id, g['title_id'], cleaned, g['platform'])
+                        romm_id = find_romm_game(g['title_id'], cleaned, g['platform'])
 
                 if romm_id:
+
                     g['romm_id'] = romm_id
                     matched_groups.append(g)
                     logger.info(f"✅ MATCH: {g['handler'].__class__.__name__} [{gk}] -> {game_name} (RomM ID: {romm_id}) | {len(g['files'])} files")
