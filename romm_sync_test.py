@@ -220,7 +220,7 @@ async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=No
                         "X-Api-Key": romm_api_key,
                         "Accept": "application/json"
                     }
-                    with httpx.Client(base_url=romm_url, verify=False, timeout=60.0) as http:
+                    with httpx.Client(base_url=romm_url, verify=False, timeout=60.0, follow_redirects=True) as http:
                         resp = http.get("/api/roms?limit=5000", headers=headers)
                         if resp.status_code == 200:
                             data = resp.json()
