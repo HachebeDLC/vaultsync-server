@@ -236,6 +236,21 @@ async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=No
                                 logger.debug(f"Response: {data}")
                             
                             cursor = conn.cursor()
+                            
+                            # Ensure the table exists (in case the server hasn't been rebuilt with the new schema)
+                            cursor.execute('''
+                                CREATE TABLE IF NOT EXISTS romm_games (
+                                    id SERIAL PRIMARY KEY,
+                                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                                    romm_id INTEGER NOT NULL,
+                                    name TEXT NOT NULL,
+                                    fs_name TEXT,
+                                    platform_slug TEXT,
+                                    UNIQUE(user_id, romm_id)
+                                )
+                            ''')
+                            
+                            # Clear old entries for this user to avoid duplicates if ID changes
                             cursor.execute("DELETE FROM romm_games WHERE user_id = %s", (user_id,))
                             
                             count = 0
