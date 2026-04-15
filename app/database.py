@@ -92,12 +92,10 @@ def _create_tables(cursor) -> None:
             UNIQUE(user_id, romm_id)
         )
     ''')
-    # We must ensure the pg_trgm extension is created BEFORE making indexes that use it
-    cursor.execute('CREATE EXTENSION IF NOT EXISTS pg_trgm')
-
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_romm_games_user_id ON romm_games (user_id)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_romm_games_name ON romm_games USING gin(name gin_trgm_ops)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_romm_games_fs_name ON romm_games USING gin(fs_name gin_trgm_ops)')
+    # Standard B-Tree indexes (used for equality, but keeps DB fast and permissions simple)
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_romm_games_name ON romm_games (name)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_romm_games_fs_name ON romm_games (fs_name)')
 
 
 def _col_exists(cursor, table: str, column: str) -> bool:
