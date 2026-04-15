@@ -30,12 +30,21 @@ from app import crud
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger("DeriveKey")
 
-def derive_key(password, salt_hex):
-    salt = bytes.fromhex(salt_hex)
+def derive_key(password, salt_value):
+    # Fallback logic: if salt looks like hex (32 chars), use bytes.fromhex
+    # Otherwise, use the raw string (like an email) as the salt bytes.
+    try:
+        if len(salt_value) == 32 and all(c in "0123456789abcdefABCDEF" for c in salt_value):
+            salt_bytes = bytes.fromhex(salt_value)
+        else:
+            salt_bytes = salt_value.encode()
+    except Exception:
+        salt_bytes = salt_value.encode()
+
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
-        salt=salt,
+        salt=salt_bytes,
         iterations=100000,
         backend=default_backend()
     )
@@ -56,10 +65,8 @@ if __name__ == "__main__":
                 print(f"Error: User {args.email} not found")
                 sys.exit(1)
             
-            salt = user.get('salt')
-            if not salt:
-                print(f"Error: User {args.email} has no salt in database")
-                sys.exit(1)
+            # Use DB salt if available, otherwise fallback to email (VaultSync legacy fallback)
+            salt = user.get("salt") or user["email"]
             
             key = derive_key(args.password, salt)
             print("-" * 40)
