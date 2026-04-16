@@ -8,8 +8,6 @@ import logging
 import re
 import shutil
 import zipfile
-import json
-import subprocess
 
 # Manual .env loader
 def load_env(env_path):
@@ -70,7 +68,7 @@ class RetroArchHandler(SaveHandler):
         name = clean_game_name(filename)
         return (f"retroarch:{name}", None, name, filename)
     def should_zip(self, files_count): 
-        return False
+        return False # RetroArch files are uploaded individually
 
 class SwitchHandler(SaveHandler):
     def can_handle(self, platform, path):
@@ -120,10 +118,10 @@ class GciHandler(SaveHandler):
         return platform == "gc" and path.lower().endswith(".gci")
     def extract_meta(self, platform, path):
         filename = path.split("/")[-1]
-        game_id = filename[:4] 
+        game_id = filename[:4] # GameCube IDs usually start with 4-6 chars (e.g. GM4E)
         return (f"gc_gci:{game_id}", game_id, None, filename)
     def should_zip(self, files_count):
-        return True
+        return True # GciSaveHandler uses createBundle() to zip GCIs
     def get_zip_name(self, title_id, fuzzy_name):
         return f"gci_bundle_{title_id}.zip"
 
@@ -132,12 +130,16 @@ class Ps2Handler(SaveHandler):
         return platform in ("ps2", "aethersx2", "pcsx2")
     def extract_meta(self, platform, path):
         parts = path.split("/")
+        # Look for the .ps2 folder or file
         ps2_idx = next((i for i, p in enumerate(parts) if p.lower().endswith(".ps2")), -1)
         if ps2_idx != -1:
             title_id = parts[ps2_idx].replace(".ps2", "").replace(".PS2", "")
+            # If it has subdirectories (folder memory card), inner is everything inside it
             if ps2_idx < len(parts) - 1:
                 inner = "/".join(parts[ps2_idx+1:])
-                title_id = parts[ps2_idx+1]
+                # The serial is usually the folder inside the memcard
+                serial_folder = parts[ps2_idx+1]
+                title_id = serial_folder
             else:
                 inner = parts[-1]
             return (f"ps2:{title_id}", title_id, None, inner)
@@ -146,7 +148,7 @@ class Ps2Handler(SaveHandler):
         name = clean_game_name(filename)
         return (f"ps2:{name}", None, name, filename)
     def should_zip(self, files_count):
-        return files_count > 1
+        return files_count > 1 # Only zip if it's a folder memory card with multiple files
 
 class DefaultHandler(SaveHandler):
     def can_handle(self, platform, path): return True
@@ -165,23 +167,25 @@ HANDLERS = [
     PspHandler(),
     GciHandler(),
     Ps2Handler(),
-    DefaultHandler()
+    DefaultHandler() # Must be last
 ]
 
 def resolve_meta_from_path(path):
     parts = path.strip("/").split("/")
     if len(parts) < 2:
         return None, None, parts[-1], parts[-1], DefaultHandler()
+
     platform = parts[0].lower()
+    
     for handler in HANDLERS:
         if handler.can_handle(platform, path):
             group_key, title_id, fuzzy_name, inner_path = handler.extract_meta(platform, path)
             return platform, group_key, title_id, fuzzy_name, inner_path, handler
+            
     return None, None, None, None, None, None
 
 async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=None, override_romm_key=None):
     try:
-        from psycopg2.extras import RealDictCursor
         with get_db() as conn:
             user = crud.get_user_by_email(conn, user_email)
             if not user:
@@ -189,7 +193,7 @@ async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=No
                 return
 
             user_id = user['id']
-            romm_url = (override_romm_url or user.get('romm_url', '')).rstrip('/')
+            romm_url = override_romm_url or user.get('romm_url')
             romm_api_key = override_romm_key or user.get('romm_api_key')
 
             if not dry_run and (not romm_url or not romm_api_key):
@@ -203,109 +207,91 @@ async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=No
                 return
 
             client = RomMClient(base_url=romm_url, api_key=romm_api_key) if romm_url and romm_api_key else None
-            
-            # 2.5 Logic: Direct call to curl for sync to bypass Python TLS/Header 403 issues
-            if args.sync_library and romm_url and romm_api_key:
-                logger.info(f"Syncing RomM library via direct curl to {romm_url}...")
-                try:
-                    url = f"{romm_url}/api/roms?limit=5000"
-                    cmd = [
-                        "curl", "--location", "--silent", "--fail",
-                        "--header", f"Authorization: Bearer {romm_api_key}",
-                        "--header", "Accept: application/json",
-                        url
-                    ]
-                    result = subprocess.run(cmd, capture_output=True, text=True)
-                    if result.returncode == 0:
-                        data = json.loads(result.stdout)
-                        games = data.get('data', data.get('items', data.get('results', data)))
-                        if not isinstance(games, list): games = []
-                        
-                        cursor = conn.cursor()
-                        cursor.execute("DELETE FROM romm_games WHERE user_id = %s", (user_id,))
-                        
-                        count = 0
-                        for g in games:
-                            platform_data = g.get('platform') or {}
-                            p_slug = g.get('platform_slug') or platform_data.get('slug')
-                            t_id = g.get('serial') or g.get('title_id')
-                            cursor.execute("""
-                                INSERT INTO romm_games (user_id, romm_id, name, fs_name, platform_slug, title_id)
-                                VALUES (%s, %s, %s, %s, %s, %s)
-                                ON CONFLICT (user_id, romm_id) DO UPDATE SET
-                                    name = EXCLUDED.name, fs_name = EXCLUDED.fs_name, 
-                                    platform_slug = EXCLUDED.platform_slug, title_id = EXCLUDED.title_id
-                            """, (user_id, g['id'], g['name'], g.get('file_name'), p_slug, t_id))
-                            count += 1
-                        conn.commit()
-                        logger.info(f"✅ Successfully cached {count} games in local database.")
-                    else:
-                        logger.error(f"Curl failed with return code {result.returncode}: {result.stderr}")
-                except Exception as e:
-                    logger.error(f"Library sync failed: {e}")
 
             files, _ = crud.list_user_files(conn, user_id, limit=3000)
             logger.info(f"Found {len(files)} files for user {user_email}")
 
+            # Grouping Logic
             groups = {}
             for f in files:
                 path = f['path']
                 platform, group_key, title_id, fuzzy_name, inner_path, handler = resolve_meta_from_path(path)
+                
                 if not platform or not group_key: continue
+                
                 if group_key not in groups:
                     groups[group_key] = {
-                        "platform": platform, "title_id": title_id, "fuzzy_name": fuzzy_name,
-                        "game_name": None, "romm_id": None, "handler": handler, "files": []
+                        "platform": platform,
+                        "title_id": title_id,
+                        "fuzzy_name": fuzzy_name,
+                        "game_name": None,
+                        "romm_id": None,
+                        "handler": handler,
+                        "files": []
                     }
-                groups[group_key]["files"].append({"full_path": path, "inner_path": inner_path, "size": f['size']})
+                
+                groups[group_key]["files"].append({
+                    "full_path": path,
+                    "inner_path": inner_path,
+                    "size": f['size']
+                })
 
+            # Matching Groups
             matched_groups = []
             for gk, g in groups.items():
-                t_id = g['title_id']
-                # Try name resolution from TitleDB
-                game_name = title_db.translate(t_id) if t_id else g['fuzzy_name']
+                game_name = g['fuzzy_name']
+                if not game_name and g['title_id'] and g['platform'] != "retroarch":
+                    game_name = title_db.translate(g['title_id'])
+                
                 if not game_name:
                     game_name = clean_game_name(g['files'][0]['inner_path'].split("/")[-1])
-                g['game_name'] = game_name
 
-                # Match in Local DB
-                cursor = conn.cursor(cursor_factory=RealDictCursor)
-                query = "SELECT romm_id FROM romm_games WHERE name ILIKE %s OR fs_name ILIKE %s"
-                params = [f'%{game_name}%', f'%{game_name}%']
-                if t_id:
-                    query += " OR title_id = %s OR name ILIKE %s OR fs_name ILIKE %s"
-                    params.extend([t_id, f'%{t_id}%', f'%{t_id}%'])
+                g['game_name'] = game_name
                 
-                cursor.execute(query + " LIMIT 1", tuple(params))
-                res = cursor.fetchone()
-                if res:
-                    g['romm_id'] = res['romm_id']
+                # Match in RomM
+                romm_id = crud.find_romm_game_for_user(conn, user_id, g['title_id'], game_name, g['platform'])
+                if not romm_id and game_name:
+                    cleaned = clean_game_name(game_name)
+                    if cleaned != game_name:
+                        romm_id = crud.find_romm_game_for_user(conn, user_id, g['title_id'], cleaned, g['platform'])
+
+                if romm_id:
+                    g['romm_id'] = romm_id
                     matched_groups.append(g)
-                    logger.info(f"✅ MATCH: {g['handler'].__class__.__name__} [{gk}] -> {game_name} (ID: {res['romm_id']})")
+                    logger.info(f"✅ MATCH: {g['handler'].__class__.__name__} [{gk}] -> {game_name} (RomM ID: {romm_id}) | {len(g['files'])} files")
                 else:
-                    logger.warning(f"❌ NO MATCH: {g['handler'].__class__.__name__} [{gk}] (Name: {game_name})")
+                    logger.warning(f"❌ NO MATCH: {g['handler'].__class__.__name__} [{gk}] (Estimated Name: {game_name}) | {len(g['files'])} files")
 
             logger.info(f"\nSummary: Found {len(matched_groups)} matched groups out of {len(groups)} total groups.")
             
-            if dry_run or not matched_groups: return
+            if dry_run or not matched_groups:
+                return
 
+            # Push logic based on Handlers
             logger.info(f"Starting push for {len(matched_groups)} groups...")
             for g in matched_groups:
                 romm_id = g['romm_id']
                 game_name = g['game_name']
                 handler = g['handler']
                 files_list = g['files']
+                
                 should_zip = handler.should_zip(len(files_list))
 
                 if not should_zip:
+                    # Individual Push (RetroArch, single files)
                     for gf in files_list:
                         source_path = os.path.abspath(os.path.join(STORAGE_DIR, str(user_id), gf['full_path'].lstrip("/\\")))
                         if not os.path.exists(source_path): continue
+                        
                         with tempfile.NamedTemporaryFile(suffix=os.path.basename(gf['full_path'])) as tmp:
-                            reassembly_service.reassemble_file(source_path, tmp.name, zk_key, gf['size'])
-                            success = await client.upload_save(romm_id, tmp.name)
-                            if success: logger.info(f"🚀 Pushed {gf['full_path']}")
+                            try:
+                                reassembly_service.reassemble_file(source_path, tmp.name, zk_key, gf['size'])
+                                logger.info(f"Pushing individual file: {gf['full_path']}...")
+                                success = await client.upload_save(romm_id, tmp.name)
+                                if success: logger.info(f"🚀 Pushed {gf['full_path']}")
+                            except Exception as e: logger.error(f"Error {gf['full_path']}: {e}")
                 else:
+                    # Grouped Zip Push (Switch, 3DS, PSP, GCI Bundles)
                     with tempfile.TemporaryDirectory() as tmp_dir:
                         for gf in files_list:
                             source_path = os.path.abspath(os.path.join(STORAGE_DIR, str(user_id), gf['full_path'].lstrip("/\\")))
@@ -320,14 +306,18 @@ async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=No
                             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
                                 for root, _, files in os.walk(tmp_dir):
                                     for file in files:
-                                        abs_f = os.path.join(root, file)
-                                        zf.write(abs_f, os.path.relpath(abs_f, tmp_dir))
+                                        abs_file = os.path.join(root, file)
+                                        zf.write(abs_file, os.path.relpath(abs_file, tmp_dir))
+                            
+                            logger.info(f"Pushing zip archive: {game_name} ({zip_name})...")
                             success = await client.upload_save(romm_id, zip_path)
                             if success: logger.info(f"🚀 Pushed {game_name} (Zipped)")
                         finally:
                             if os.path.exists(zip_path): os.remove(zip_path)
+
     except Exception as e:
-        logger.error(f"Error: {e}")
+
+        logger.error(f"Database error: {e}")
         import traceback
         logger.error(traceback.format_exc())
 
@@ -338,6 +328,5 @@ if __name__ == "__main__":
     parser.add_argument("--push", action="store_true")
     parser.add_argument("--romm-url")
     parser.add_argument("--romm-key")
-    parser.add_argument("--sync-library", action="store_true")
     args = parser.parse_args()
     asyncio.run(match_saves(args.email, args.key, not args.push, args.romm_url, args.romm_key))
