@@ -186,6 +186,7 @@ def resolve_meta_from_path(path):
 
 async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=None, override_romm_key=None):
     try:
+        from psycopg2.extras import RealDictCursor
         with get_db() as conn:
             user = crud.get_user_by_email(conn, user_email)
             if not user:
@@ -209,35 +210,29 @@ async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=No
             # Initialize RomM client for this user
             client = RomMClient(base_url=romm_url, api_key=romm_api_key) if romm_url and romm_api_key else None
             
+            # Request Headers matching user's successful curl exactly
+            curl_headers = {
+                "Authorization": f"Bearer {romm_api_key}",
+                "User-Agent": "curl/7.81.0",
+                "Accept": "*/*"
+            }
+
             # 2.5 Optional: Sync RomM Library to local DB
             if args.sync_library and client:
                 logger.info(f"Syncing RomM library to local database from {romm_url}...")
                 try:
                     import httpx
-                    # Use both Authorization and X-Api-Key to ensure compatibility
-                    headers = {
-                        "Authorization": f"Bearer {romm_api_key}",
-                        "X-Api-Key": romm_api_key,
-                        "Accept": "application/json"
-                    }
                     with httpx.Client(base_url=romm_url, verify=False, timeout=60.0, follow_redirects=True) as http:
-                        resp = http.get("/api/roms?limit=5000", headers=headers)
+                        resp = http.get("/api/roms", headers=curl_headers) # Removed limit=1000 to keep it clean as per user req
                         if resp.status_code == 200:
                             data = resp.json()
-                            # Handle different RomM API response formats
-                            games = []
-                            if isinstance(data, list):
-                                games = data
-                            elif isinstance(data, dict):
-                                games = data.get('data', data.get('items', data.get('results', [])))
-                            
-                            if not games:
-                                logger.warning("RomM returned an empty library or unknown format.")
-                                logger.debug(f"Response: {data}")
+                            games = data.get('data', data.get('items', data.get('results', data)))
+                            if not isinstance(games, list):
+                                games = [games] if isinstance(games, dict) and 'id' in games else []
                             
                             cursor = conn.cursor()
                             
-                            # Ensure the table exists (in case the server hasn't been rebuilt with the new schema)
+                            # Ensure the table has the correct schema including title_id
                             cursor.execute('''
                                 CREATE TABLE IF NOT EXISTS romm_games (
                                     id SERIAL PRIMARY KEY,
@@ -246,30 +241,33 @@ async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=No
                                     name TEXT NOT NULL,
                                     fs_name TEXT,
                                     platform_slug TEXT,
+                                    title_id TEXT,
                                     UNIQUE(user_id, romm_id)
                                 )
                             ''')
+                            # Migration: Add title_id if it's an old table
+                            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='romm_games' AND column_name='title_id'")
+                            if not cursor.fetchone():
+                                cursor.execute("ALTER TABLE romm_games ADD COLUMN title_id TEXT")
                             
-                            # Clear old entries for this user to avoid duplicates if ID changes
                             cursor.execute("DELETE FROM romm_games WHERE user_id = %s", (user_id,))
                             
                             count = 0
                             for g in games:
                                 platform_data = g.get('platform') or {}
                                 p_slug = g.get('platform_slug') or platform_data.get('slug')
+                                # Try to find a TitleID/Serial in the RomM record
+                                t_id = g.get('serial') or g.get('title_id')
+                                
                                 cursor.execute("""
-                                    INSERT INTO romm_games (user_id, romm_id, name, fs_name, platform_slug)
-                                    VALUES (%s, %s, %s, %s, %s)
-                                    ON CONFLICT (user_id, romm_id) DO UPDATE SET
-                                        name = EXCLUDED.name,
-                                        fs_name = EXCLUDED.fs_name,
-                                        platform_slug = EXCLUDED.platform_slug
-                                """, (user_id, g['id'], g['name'], g.get('file_name'), p_slug))
+                                    INSERT INTO romm_games (user_id, romm_id, name, fs_name, platform_slug, title_id)
+                                    VALUES (%s, %s, %s, %s, %s, %s)
+                                """, (user_id, g['id'], g['name'], g.get('file_name'), p_slug, t_id))
                                 count += 1
                             conn.commit()
                             logger.info(f"✅ Successfully cached {count} games in local database.")
                         else:
-                            logger.error(f"Failed to fetch library: HTTP {resp.status_code} | Headers used: {headers.keys()}")
+                            logger.error(f"Failed to fetch library: HTTP {resp.status_code}")
                 except Exception as e:
                     logger.error(f"Library sync failed: {e}")
 
@@ -283,13 +281,8 @@ async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=No
                 logger.info("Fetching library from RomM API for fallback matching...")
                 try:
                     import httpx
-                    headers = {
-                        "Authorization": f"Bearer {romm_api_key}",
-                        "X-Api-Key": romm_api_key,
-                        "Accept": "application/json"
-                    }
-                    with httpx.Client(base_url=romm_url, verify=False, timeout=30.0) as http:
-                        resp = http.get("/api/roms?limit=5000", headers=headers)
+                    with httpx.Client(base_url=romm_url, verify=False, timeout=30.0, follow_redirects=True) as http:
+                        resp = http.get("/api/roms", headers=curl_headers)
                         if resp.status_code == 200:
                             data = resp.json()
                             romm_games_api = data.get('data', data.get('items', [])) if isinstance(data, dict) else data
@@ -299,10 +292,19 @@ async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=No
                     api_failed = True
 
             def find_romm_game(title_id, game_name, platform_slug):
-                # 1. Try Local DB (Primary)
+                # 1. Try Local DB (Primary - searching name, filename AND title_id column)
                 try:
-                    res = crud.find_romm_game_for_user(conn, user_id, title_id, game_name, platform_slug)
-                    if res: return res
+                    cursor = conn.cursor(cursor_factory=RealDictCursor)
+                    query = "SELECT romm_id FROM romm_games WHERE name ILIKE %s OR fs_name ILIKE %s"
+                    params = [f'%{game_name}%', f'%{game_name}%']
+                    
+                    if title_id:
+                        query += " OR title_id = %s OR name ILIKE %s OR fs_name ILIKE %s"
+                        params.extend([title_id, f'%{title_id}%', f'%{title_id}%'])
+                    
+                    cursor.execute(query + " LIMIT 1", tuple(params))
+                    res = cursor.fetchone()
+                    if res: return res['romm_id']
                 except Exception as e:
                     logger.debug(f"Local DB match error: {e}")
 
