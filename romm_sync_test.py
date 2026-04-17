@@ -59,6 +59,8 @@ class SaveHandler:
         return True
     def get_zip_name(self, title_id: str, fuzzy_name: str) -> str:
         return f"{title_id}_save.zip"
+    def get_emulator(self, platform: str) -> str:
+        return platform
 
 class RetroArchHandler(SaveHandler):
     def can_handle(self, platform, path):
@@ -67,8 +69,10 @@ class RetroArchHandler(SaveHandler):
         filename = path.split("/")[-1]
         name = clean_game_name(filename)
         return (f"retroarch:{name}", None, name, filename)
-    def should_zip(self, files_count): 
+    def should_zip(self, files_count):
         return False # RetroArch files are uploaded individually
+    def get_emulator(self, platform):
+        return "retroarch"
 
 class SwitchHandler(SaveHandler):
     def can_handle(self, platform, path):
@@ -78,6 +82,8 @@ class SwitchHandler(SaveHandler):
         title_id = parts[1] if len(parts) >= 3 else parts[-1]
         inner = "/".join(parts[2:]) if len(parts) >= 3 else parts[-1]
         return (f"switch:{title_id}", title_id, None, inner)
+    def get_emulator(self, platform):
+        return "eden"
 
 class N3dsHandler(SaveHandler):
     def can_handle(self, platform, path):
@@ -94,6 +100,8 @@ class N3dsHandler(SaveHandler):
             title_id = parts[-1]
             inner = parts[-1]
         return (f"3ds:{title_id}", title_id, None, inner)
+    def get_emulator(self, platform):
+        return "citra"
 
 class PspHandler(SaveHandler):
     def can_handle(self, platform, path):
@@ -112,6 +120,8 @@ class PspHandler(SaveHandler):
             title_id = parts[-1]
             inner = parts[-1]
         return (f"psp:{title_id}", title_id, None, inner)
+    def get_emulator(self, platform):
+        return "ppsspp"
 
 class GciHandler(SaveHandler):
     def can_handle(self, platform, path):
@@ -124,6 +134,8 @@ class GciHandler(SaveHandler):
         return True # GciSaveHandler uses createBundle() to zip GCIs
     def get_zip_name(self, title_id, fuzzy_name):
         return f"gci_bundle_{title_id}.zip"
+    def get_emulator(self, platform):
+        return "dolphin"
 
 class Ps2Handler(SaveHandler):
     def can_handle(self, platform, path):
@@ -149,6 +161,8 @@ class Ps2Handler(SaveHandler):
         return (f"ps2:{name}", None, name, filename)
     def should_zip(self, files_count):
         return files_count > 1 # Only zip if it's a folder memory card with multiple files
+    def get_emulator(self, platform):
+        return "pcsx2"
 
 class DefaultHandler(SaveHandler):
     def can_handle(self, platform, path): return True
@@ -184,7 +198,7 @@ def resolve_meta_from_path(path):
             
     return None, None, None, None, None, None
 
-async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=None, override_romm_key=None):
+async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=None, override_romm_key=None, sync_library=False):
     try:
         with get_db() as conn:
             user = crud.get_user_by_email(conn, user_email)
@@ -207,6 +221,45 @@ async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=No
                 return
 
             client = RomMClient(base_url=romm_url, api_key=romm_api_key) if romm_url and romm_api_key else None
+            device_id = None
+
+            if client:
+                ok, msg = await client.check_instance()
+                if ok:
+                    logger.info(f"RomM instance check passed: {msg}")
+                else:
+                    logger.error(f"RomM instance check FAILED: {msg}")
+                    if not dry_run:
+                        return
+
+                hb_ok, version = await client.heartbeat()
+                if hb_ok:
+                    logger.info(f"RomM heartbeat OK — version {version}")
+                    if client.supports_device_api():
+                        device_id = await client.ensure_device_registered(conn, user_id)
+                        if device_id:
+                            logger.info(f"Using RomM device_id={device_id}")
+                        else:
+                            logger.warning("Device registration failed — continuing without device_id")
+                    else:
+                        logger.info(f"RomM {version} < 4.7.0 — skipping device registration")
+                else:
+                    logger.warning("RomM heartbeat failed — continuing without version gating")
+            else:
+                logger.warning("No RomM client configured — skipping instance check")
+
+            if sync_library:
+                if not client:
+                    logger.error("Cannot sync library: no RomM client configured")
+                    return
+                logger.info("Fetching RomM library...")
+                library = await client.fetch_entire_library()
+                if not library:
+                    logger.error("RomM library fetch returned empty — check credentials or library contents")
+                    return
+                crud.sync_user_romm_library(conn, user_id, library)
+                conn.commit()
+                logger.info(f"Library synced: {len(library)} games stored for user {user_email}")
 
             files, _ = crud.list_user_files(conn, user_id, limit=3000)
             logger.info(f"Found {len(files)} files for user {user_email}")
@@ -277,17 +330,26 @@ async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=No
                 
                 should_zip = handler.should_zip(len(files_list))
 
+                emulator = handler.get_emulator(g['platform'])
+
                 if not should_zip:
                     # Individual Push (RetroArch, single files)
                     for gf in files_list:
                         source_path = os.path.abspath(os.path.join(STORAGE_DIR, str(user_id), gf['full_path'].lstrip("/\\")))
                         if not os.path.exists(source_path): continue
-                        
+
                         with tempfile.NamedTemporaryFile(suffix=os.path.basename(gf['full_path'])) as tmp:
                             try:
                                 reassembly_service.reassemble_file(source_path, tmp.name, zk_key, gf['size'])
-                                logger.info(f"Pushing individual file: {gf['full_path']}...")
-                                success = await client.upload_save(romm_id, tmp.name)
+                                is_state = tmp.name.lower().endswith(('.state', '.auto', '.manual')) or '.state' in os.path.basename(gf['full_path']).lower()
+                                logger.info(f"Pushing individual file: {gf['full_path']} (emulator={emulator}, state={is_state})...")
+                                if is_state:
+                                    success = await client.upload_state(romm_id, tmp.name, emulator, device_id=device_id)
+                                else:
+                                    success = await client.upload_save(
+                                        romm_id, tmp.name, emulator,
+                                        device_id=device_id, overwrite=True,
+                                    )
                                 if success: logger.info(f"🚀 Pushed {gf['full_path']}")
                             except Exception as e: logger.error(f"Error {gf['full_path']}: {e}")
                 else:
@@ -309,8 +371,11 @@ async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=No
                                         abs_file = os.path.join(root, file)
                                         zf.write(abs_file, os.path.relpath(abs_file, tmp_dir))
                             
-                            logger.info(f"Pushing zip archive: {game_name} ({zip_name})...")
-                            success = await client.upload_save(romm_id, zip_path)
+                            logger.info(f"Pushing zip archive: {game_name} ({zip_name}) emulator={emulator}...")
+                            success = await client.upload_save(
+                                romm_id, zip_path, emulator,
+                                device_id=device_id, overwrite=True,
+                            )
                             if success: logger.info(f"🚀 Pushed {game_name} (Zipped)")
                         finally:
                             if os.path.exists(zip_path): os.remove(zip_path)
@@ -321,12 +386,32 @@ async def match_saves(user_email, zk_key_b64, dry_run=True, override_romm_url=No
         import traceback
         logger.error(traceback.format_exc())
 
+async def check_romm_instance(romm_url, romm_api_key):
+    if not romm_url or not romm_api_key:
+        logger.error("--romm-url and --romm-key are required for --check")
+        return
+    client = RomMClient(base_url=romm_url, api_key=romm_api_key)
+    ok, msg = await client.check_instance()
+    if ok:
+        logger.info(f"✅ {msg}")
+    else:
+        logger.error(f"❌ {msg}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="RomM Sync Test Script")
-    parser.add_argument("--email", required=True)
-    parser.add_argument("--key", required=True)
+    parser.add_argument("--email")
+    parser.add_argument("--key")
     parser.add_argument("--push", action="store_true")
     parser.add_argument("--romm-url")
     parser.add_argument("--romm-key")
+    parser.add_argument("--check", action="store_true", help="Only verify the RomM instance is reachable and the API key is valid")
+    parser.add_argument("--sync-library", action="store_true", help="Fetch and cache the full RomM library before matching saves")
     args = parser.parse_args()
-    asyncio.run(match_saves(args.email, args.key, not args.push, args.romm_url, args.romm_key))
+
+    if args.check:
+        asyncio.run(check_romm_instance(args.romm_url, args.romm_key))
+    else:
+        if not args.email or not args.key:
+            parser.error("--email and --key are required unless using --check")
+        asyncio.run(match_saves(args.email, args.key, not args.push, args.romm_url, args.romm_key, args.sync_library))

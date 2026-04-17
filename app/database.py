@@ -127,6 +127,15 @@ def _run_migrations(cursor) -> None:
         cursor.execute("ALTER TABLE users ADD COLUMN romm_url TEXT")
         cursor.execute("ALTER TABLE users ADD COLUMN romm_api_key TEXT")
 
+    if not _col_exists(cursor, "users", "romm_device_id"):
+        logger.info("Migrating: Adding romm_device_id column to 'users'")
+        cursor.execute("ALTER TABLE users ADD COLUMN romm_device_id TEXT")
+        cursor.execute("ALTER TABLE users ADD COLUMN romm_device_client_version TEXT")
+
+    if not _col_exists(cursor, "files", "romm_id"):
+        logger.info("Migrating: Adding romm_id column to 'files'")
+        cursor.execute("ALTER TABLE files ADD COLUMN romm_id INTEGER")
+
     # Migrate files.blocks TEXT → JSONB
     cursor.execute(
         "SELECT data_type FROM information_schema.columns WHERE table_name='files' AND column_name='blocks'"

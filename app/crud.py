@@ -114,6 +114,20 @@ def update_file_sync(conn, user_id: int, path: str, hash: str, size: int, update
         (hash, size, updated_at, Json(blocks), user_id, path)
     )
 
+def update_file_romm_id(conn, user_id: int, path: str, romm_id: int):
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE files SET romm_id = %s WHERE user_id = %s AND path = %s",
+        (romm_id, user_id, path)
+    )
+
+def get_files_with_romm_id(conn, user_id: int = None):
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    if user_id is not None:
+        cursor.execute("SELECT user_id, path, romm_id, updated_at FROM files WHERE romm_id IS NOT NULL AND user_id = %s", (user_id,))
+    else:
+        cursor.execute("SELECT user_id, path, romm_id, updated_at FROM files WHERE romm_id IS NOT NULL")
+    return cursor.fetchall()
 
 def delete_file_metadata(conn, user_id: int, path: str):
     with _cache_lock:
@@ -156,8 +170,29 @@ def revoke_all_user_refresh_tokens(conn, user_id: int):
 def update_user_romm_creds(conn, user_id: int, romm_url: str, romm_api_key: str):
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE users SET romm_url = %s, romm_api_key = %s WHERE id = %s", 
+        "UPDATE users SET romm_url = %s, romm_api_key = %s WHERE id = %s",
         (romm_url, romm_api_key, user_id)
+    )
+
+def get_user_romm_device(conn, user_id: int):
+    """Returns (device_id, client_version) tuple, or (None, None) if unregistered."""
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT romm_device_id, romm_device_client_version FROM users WHERE id = %s",
+        (user_id,)
+    )
+    row = cursor.fetchone()
+    if not row:
+        return (None, None)
+    if isinstance(row, dict):
+        return (row.get("romm_device_id"), row.get("romm_device_client_version"))
+    return (row[0], row[1])
+
+def set_user_romm_device(conn, user_id: int, device_id: str, client_version: str):
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET romm_device_id = %s, romm_device_client_version = %s WHERE id = %s",
+        (device_id, client_version, user_id)
     )
 
 def sync_user_romm_library(conn, user_id: int, games_list: list):
@@ -194,14 +229,13 @@ def sync_user_romm_library(conn, user_id: int, games_list: list):
     execute_values(cursor, query, data)
 
 def find_romm_game_for_user(conn, user_id: int, target_id: str, target_name: str, platform_slug: str = None):
-    """Searches the RomM library for a match (Global library, not strictly per-user)."""
+    """Searches the RomM library for a match."""
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     
     # 1. Exact ID Match (for Switch, GC, PSP)
     if target_id:
-        # Removed strict user_id check to allow global library matching
-        query = "SELECT romm_id, name FROM romm_games WHERE (name ILIKE %s OR fs_name ILIKE %s)"
-        params = [f'%{target_id}%', f'%{target_id}%']
+        query = "SELECT romm_id, name FROM romm_games WHERE user_id = %s AND (name ILIKE %s OR fs_name ILIKE %s)"
+        params = [user_id, f'%{target_id}%', f'%{target_id}%']
         
         if platform_slug:
             platform_query = query + " AND platform_slug = %s LIMIT 1"
@@ -219,9 +253,8 @@ def find_romm_game_for_user(conn, user_id: int, target_id: str, target_name: str
     if target_name:
         clean_target = target_name.lower().strip()
         
-        # Removed strict user_id check to allow global library matching
-        query = "SELECT romm_id, name FROM romm_games WHERE (name ILIKE %s OR fs_name ILIKE %s)"
-        params = [f'%{clean_target}%', f'%{clean_target}%']
+        query = "SELECT romm_id, name FROM romm_games WHERE user_id = %s AND (name ILIKE %s OR fs_name ILIKE %s)"
+        params = [user_id, f'%{clean_target}%', f'%{clean_target}%']
         
         if platform_slug:
             platform_query = query + " AND platform_slug = %s LIMIT 1"

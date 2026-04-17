@@ -44,3 +44,6 @@ CORS_ORIGINS = os.environ.get("VAULTSYNC_CORS_ORIGINS", "*").split(",")
 # --- RomM Integration ---
 ROMM_URL = os.environ.get("ROMM_URL", "")
 ROMM_API_KEY = os.environ.get("ROMM_API_KEY", "")
+VAULTSYNC_VERSION = "1.0.0"
+ROMM_DEVICE_NAME = "vaultsync"
+ROMM_DEVICE_API_MIN_VERSION = "4.7.0"

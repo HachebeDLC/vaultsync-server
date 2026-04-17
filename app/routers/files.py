@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from ..config import STORAGE_DIR, get_block_size, OVERHEAD, get_encrypted_block_size
 from ..services.event_notifier import event_notifier
 from ..database import get_db
-from ..models import FileRequest, RestoreRequest, BlockCheckRequest, BlockDownloadRequest, FinalizeRequest, RomMSyncRequest
+from ..models import FileRequest, RestoreRequest, BlockCheckRequest, BlockDownloadRequest, FinalizeRequest, RomMSyncRequest, RomMPullRequest
 from ..dependencies import get_current_user
 
 
@@ -115,7 +115,17 @@ async def download_blocks(body: BlockDownloadRequest, current_user = Depends(get
             return m['size'] if m else os.path.getsize(safe_path)
 
     file_size = await asyncio.to_thread(_get_file_size)
-    enc_block_size = get_encrypted_block_size(file_size)
+    
+    # Auto-detect block size
+    is_encrypted = False
+    actual_file_size = os.path.getsize(safe_path) if os.path.exists(safe_path) else 0
+    if actual_file_size >= 7:
+        async with aiofiles.open(safe_path, "rb") as f:
+            magic = await f.read(7)
+            if magic == b"NEOSYNC":
+                is_encrypted = True
+    
+    enc_block_size = get_encrypted_block_size(file_size) if is_encrypted else get_block_size(file_size)
 
     async def iter_blocks():
         if not body.indices:
@@ -441,6 +451,13 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
                         target_id = filename.split('.')[0].upper()
                     elif len(parts) == 2 and not filename.lower().endswith('.srm'):
                         target_id = filename.split('.')[0].upper()
+                elif platform in ('ps2', 'pcsx2', 'aethersx2'):
+                    if filename.lower().endswith('.ps2'):
+                        target_name = os.path.splitext(filename)[0]
+                elif platform in ('gba', 'snes', 'n64', 'nds', 'gb', 'gbc', 'nes', 'megadrive', 'genesis', 'ps1', 'psx'):
+                    # Typically RetroArch stores saves as game_name.srm or game_name.state
+                    if filename.lower().endswith('.srm') or filename.lower().endswith('.state') or filename.lower().endswith('.sav'):
+                        target_name = os.path.splitext(filename)[0]
                 
                 # If target_id was accidentally set to a folder name like "GBA", unset it
                 if target_id and target_id in ('GBA', 'SNES', 'NES', 'N64', 'NDS', 'SAVES', 'STATES'):
@@ -485,9 +502,37 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
                     return
 
                 # B. Push raw file to RomM
-                success = await target_client.upload_save(rom_id, output_path, device_id=f"NeoSync-{metadata.get('device_name', 'Unknown')}")
+                emulator_map = {
+                    'switch': 'eden', 'eden': 'eden',
+                    'gc': 'dolphin', 'dolphin': 'dolphin', 'wii': 'dolphin',
+                    'psp': 'ppsspp', 'ppsspp': 'ppsspp',
+                    'ps2': 'pcsx2', 'pcsx2': 'pcsx2', 'aethersx2': 'pcsx2',
+                    '3ds': 'citra', 'citra': 'citra', 'azahar': 'citra',
+                }
+                emulator = emulator_map.get(platform, 'retroarch')
+
+                device_id = None
+                try:
+                    with get_db() as conn:
+                        device_id = await target_client.ensure_device_registered(conn, user_id)
+                except Exception as e:
+                    logger.warning(f"RomM device registration skipped: {e}")
+
+                is_state = output_path.lower().endswith(('.state', '.auto', '.manual'))
+                if is_state:
+                    success = await target_client.upload_state(rom_id, output_path, emulator, device_id=device_id)
+                else:
+                    success = await target_client.upload_save(
+                        rom_id, output_path, emulator,
+                        device_id=device_id, overwrite=True,
+                    )
                 if success:
                     logger.info(f"Successfully synced {body.path} to RomM ID {rom_id}")
+                    def _update_file():
+                        with get_db() as conn:
+                            crud.update_file_romm_id(conn, user_id, body.path, rom_id)
+                            conn.commit()
+                    await asyncio.to_thread(_update_file)
                 
                 # C. Mandatory cool-down before releasing lock to next task
                 await asyncio.sleep(1.5)
@@ -576,3 +621,69 @@ def list_conflicts(current_user = Depends(get_current_user)):
     # Stub: Conflicts are currently handled via the .sync-conflict- suffix 
     # in the file list. This endpoint can be used for a centralized UI later.
     return {"conflicts": []}
+
+@router.post("/romm/pull")
+async def romm_pull(body: RomMPullRequest, background_tasks: BackgroundTasks, current_user = Depends(get_current_user)):
+    """
+    Triggers a pull of a save from RomM back into the VaultSync library.
+    Downloads the file, splits it, updates metadata so it is ready for clients to sync down.
+    """
+    user_id = current_user['id']
+    if not is_safe_path(user_id, body.target_path):
+        raise HTTPException(status_code=403)
+        
+    target_client = romm_client
+    if current_user.get('romm_url') and current_user.get('romm_api_key'):
+        target_client = RomMClient(current_user['romm_url'], current_user['romm_api_key'])
+
+    safe_path = os.path.abspath(os.path.join(STORAGE_DIR, str(current_user['id']), body.target_path.lstrip("/\\")))
+    temp_pull_dir = os.path.join(STORAGE_DIR, "temp_pull", str(user_id))
+
+    async def _do_pull():
+        try:
+            logger.info(f"Starting RomM Pull for ID {body.rom_id} -> {body.target_path}")
+            
+            # Download plain file from RomM
+            downloaded_path = await target_client.download_save(body.rom_id, temp_pull_dir)
+            if not downloaded_path:
+                logger.error(f"RomM Pull failed: Could not download save for ID {body.rom_id}")
+                return
+                
+            # If it's a ZIP and we expect a raw file, we should technically unzip it.
+            # Wait, RomM upload_save uploads the raw save file (see romm_client.py: files = {"saveFile": (filename, f, "application/octet-stream")})
+            # So download_save retrieves the exact raw save file!
+            
+            # Move the downloaded file into the final storage location
+            os.makedirs(os.path.dirname(safe_path), exist_ok=True)
+            if os.path.exists(safe_path):
+                # Optionally backup old file
+                version_manager.create_version(user_id, body.target_path, "RomM-Sync")
+                
+            import shutil
+            shutil.move(downloaded_path, safe_path)
+            
+            # Recalculate hash and blocks for the plain file
+            file_size = os.path.getsize(safe_path)
+            updated_at = int(os.path.getmtime(safe_path) * 1000)
+            
+            # Hashing
+            file_hash, blocks = await calculate_file_hash_and_blocks(safe_path)
+            
+            # Update DB
+            def _upsert():
+                with get_db() as conn:
+                    crud.upsert_file_metadata(
+                        conn, user_id, body.target_path, file_hash, file_size,
+                        updated_at, "RomM", blocks
+                    )
+                    crud.update_file_romm_id(conn, user_id, body.target_path, body.rom_id)
+                    conn.commit()
+            
+            await asyncio.to_thread(_upsert)
+            logger.info(f"Successfully pulled and ingested RomM save for {body.target_path}")
+            
+        except Exception as e:
+            logger.error(f"RomM Pull task failed: {str(e)}")
+            
+    background_tasks.add_task(_do_pull)
+    return {"message": "RomM pull task queued"}

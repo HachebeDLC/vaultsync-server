@@ -1,5 +1,6 @@
 import logging
 import uvicorn
+import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -10,6 +11,7 @@ from .config import CORS_ORIGINS
 from .database import init_db, get_pool
 from .routers import auth, files, recovery, events
 from .limiter import limiter
+from .services.auto_sync_romm import auto_sync_loop
 
 # --- Logging ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -37,9 +39,11 @@ app.include_router(recovery.router)
 app.include_router(events.router, prefix="/api/v1")
 
 @app.on_event("startup")
-def startup_event():
+async def startup_event():
     try:
         init_db()
+        # Start the background polling task for bidirectional RomM sync
+        asyncio.create_task(auto_sync_loop())
     except Exception as e:
         logger.critical(f"❌ Startup failed — cannot initialize DB: {e}")
         import sys

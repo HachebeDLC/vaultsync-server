@@ -45,3 +45,7 @@ class TokenRefreshRequest(BaseModel):
 class RomMSyncRequest(BaseModel):
     path: str
     key: str # User's ZK key (base64 or hex)
+
+class RomMPullRequest(BaseModel):
+    rom_id: int
+    target_path: str
