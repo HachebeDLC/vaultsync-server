@@ -62,7 +62,19 @@ def download_file(body: FileRequest, current_user = Depends(get_current_user)):
     safe_path = os.path.abspath(os.path.join(STORAGE_DIR, str(current_user['id']), body.filename.lstrip("/\\")))
     if not os.path.exists(safe_path):
         raise HTTPException(status_code=404)
-    return FileResponse(safe_path, media_type="application/octet-stream")
+        
+    is_encrypted = False
+    actual_file_size = os.path.getsize(safe_path)
+    if actual_file_size >= 7:
+        with open(safe_path, "rb") as f:
+            if f.read(7) == b"NEOSYNC":
+                is_encrypted = True
+                
+    return FileResponse(
+        safe_path, 
+        media_type="application/octet-stream",
+        headers={"x-vaultsync-encrypted": str(is_encrypted).lower()}
+    )
 
 @router.get("/files/manifest")
 def get_file_manifest(path: str, current_user = Depends(get_current_user)):
@@ -164,7 +176,11 @@ async def download_blocks(body: BlockDownloadRequest, current_user = Depends(get
                     yield chunk
                     bytes_left -= len(chunk)
                     
-    return StreamingResponse(iter_blocks(), media_type="application/octet-stream")
+    return StreamingResponse(
+        iter_blocks(), 
+        media_type="application/octet-stream",
+        headers={"x-vaultsync-encrypted": str(is_encrypted).lower()}
+    )
 
 @router.post("/upload")
 async def upload_fragment(request: Request, background_tasks: BackgroundTasks, current_user = Depends(get_current_user)):
