@@ -10,7 +10,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, BackgroundTasks, Header
 from fastapi.responses import FileResponse, StreamingResponse
 
-from ..config import STORAGE_DIR, get_block_size, OVERHEAD, get_encrypted_block_size
+from ..config import STORAGE_DIR, get_block_size, OVERHEAD, get_encrypted_block_size, romm_emulator_for
 from ..services.event_notifier import event_notifier
 from ..database import get_db
 from ..models import FileRequest, RestoreRequest, BlockCheckRequest, BlockDownloadRequest, FinalizeRequest, RomMSyncRequest, RomMPullRequest
@@ -18,7 +18,13 @@ from ..dependencies import get_current_user
 
 
 from ..services.reassembly_service import reassembly_service
-from ..services.romm_client import romm_client, RomMClient
+from ..services.romm_client import (
+    romm_client,
+    RomMClient,
+    RommNotFound,
+    RommUpstreamError,
+    RommUnavailable,
+)
 from ..services.title_db_service import title_db
 from ..utils import is_safe_path, calculate_file_hash_and_blocks
 from ..services.version_manager import version_manager
@@ -518,14 +524,7 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
                     return
 
                 # B. Push raw file to RomM
-                emulator_map = {
-                    'switch': 'eden', 'eden': 'eden',
-                    'gc': 'dolphin', 'dolphin': 'dolphin', 'wii': 'dolphin',
-                    'psp': 'ppsspp', 'ppsspp': 'ppsspp',
-                    'ps2': 'pcsx2', 'pcsx2': 'pcsx2', 'aethersx2': 'pcsx2',
-                    '3ds': 'citra', 'citra': 'citra', 'azahar': 'citra',
-                }
-                emulator = emulator_map.get(platform, 'retroarch')
+                emulator = romm_emulator_for(platform)
 
                 device_id = None
                 try:
@@ -639,67 +638,74 @@ def list_conflicts(current_user = Depends(get_current_user)):
     return {"conflicts": []}
 
 @router.post("/romm/pull")
-async def romm_pull(body: RomMPullRequest, background_tasks: BackgroundTasks, current_user = Depends(get_current_user)):
+async def romm_pull(body: RomMPullRequest, current_user = Depends(get_current_user)):
     """
-    Triggers a pull of a save from RomM back into the VaultSync library.
-    Downloads the file, splits it, updates metadata so it is ready for clients to sync down.
+    Pulls a save from RomM and streams the plaintext bytes to the caller.
+
+    The client is responsible for encrypting the bytes with its zero-knowledge key
+    and re-uploading via `/upload` + `/upload/finalize`. The server does not write
+    to the encrypted vault during a pull — preserving the ZK guarantee.
+
+    RomM metadata is returned in response headers:
+      x-romm-save-id, x-romm-rom-id, x-romm-file-name, x-romm-size,
+      x-romm-updated-at, x-romm-emulator, x-romm-sha256
+    (`x-romm-file-name` is URL-encoded.)
     """
+    import urllib.parse
     user_id = current_user['id']
-    if not is_safe_path(user_id, body.target_path):
-        raise HTTPException(status_code=403)
-        
+
     target_client = romm_client
     if current_user.get('romm_url') and current_user.get('romm_api_key'):
         target_client = RomMClient(current_user['romm_url'], current_user['romm_api_key'])
 
-    safe_path = os.path.abspath(os.path.join(STORAGE_DIR, str(current_user['id']), body.target_path.lstrip("/\\")))
-    temp_pull_dir = os.path.join(STORAGE_DIR, "temp_pull", str(user_id))
+    try:
+        with get_db() as conn:
+            tmp_path, meta = await target_client.pull_save_from_romm(conn, body.rom_id, user_id)
+    except RommNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RommUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except RommUpstreamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
-    async def _do_pull():
+    # Hash the temp file up front so we can emit x-romm-sha256 before the body.
+    hasher = hashlib.sha256()
+    try:
+        with open(tmp_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                hasher.update(chunk)
+    except Exception:
+        try: os.remove(tmp_path)
+        except OSError: pass
+        raise
+    sha256_hex = hasher.hexdigest()
+
+    async def _stream():
         try:
-            logger.info(f"Starting RomM Pull for ID {body.rom_id} -> {body.target_path}")
-            
-            # Download plain file from RomM
-            downloaded_path = await target_client.download_save(body.rom_id, temp_pull_dir)
-            if not downloaded_path:
-                logger.error(f"RomM Pull failed: Could not download save for ID {body.rom_id}")
-                return
-                
-            # If it's a ZIP and we expect a raw file, we should technically unzip it.
-            # Wait, RomM upload_save uploads the raw save file (see romm_client.py: files = {"saveFile": (filename, f, "application/octet-stream")})
-            # So download_save retrieves the exact raw save file!
-            
-            # Move the downloaded file into the final storage location
-            os.makedirs(os.path.dirname(safe_path), exist_ok=True)
-            if os.path.exists(safe_path):
-                # Optionally backup old file
-                version_manager.create_version(user_id, body.target_path, "RomM-Sync")
-                
-            import shutil
-            shutil.move(downloaded_path, safe_path)
-            
-            # Recalculate hash and blocks for the plain file
-            file_size = os.path.getsize(safe_path)
-            updated_at = int(os.path.getmtime(safe_path) * 1000)
-            
-            # Hashing
-            file_hash, blocks = await calculate_file_hash_and_blocks(safe_path)
-            
-            # Update DB
-            def _upsert():
-                with get_db() as conn:
-                    crud.upsert_file_metadata(
-                        conn, user_id, body.target_path, file_hash, file_size,
-                        updated_at, "RomM", blocks
-                    )
-                    crud.update_file_romm_id(conn, user_id, body.target_path, body.rom_id)
-                    conn.commit()
-            
-            await asyncio.to_thread(_upsert)
-            logger.info(f"Successfully pulled and ingested RomM save for {body.target_path}")
-            
-        except Exception as e:
-            logger.error(f"RomM Pull task failed: {str(e)}")
-            
-    background_tasks.add_task(_do_pull)
-    return {"message": "RomM pull task queued"}
+            async with aiofiles.open(tmp_path, "rb") as f:
+                while True:
+                    chunk = await f.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+        finally:
+            try: os.remove(tmp_path)
+            except OSError: pass
+
+    headers = {
+        "x-romm-save-id": str(meta["save_id"]),
+        "x-romm-rom-id": str(meta["romm_id"]),
+        "x-romm-file-name": urllib.parse.quote(meta.get("file_name") or ""),
+        "x-romm-size": str(meta.get("size") or 0),
+        "x-romm-sha256": sha256_hex,
+    }
+    if meta.get("updated_at"):
+        headers["x-romm-updated-at"] = str(meta["updated_at"])
+    if meta.get("emulator"):
+        headers["x-romm-emulator"] = str(meta["emulator"])
+
+    return StreamingResponse(
+        _stream(),
+        media_type="application/octet-stream",
+        headers=headers,
+    )

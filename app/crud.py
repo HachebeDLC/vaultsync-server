@@ -1,8 +1,11 @@
 import time
+import logging
 from psycopg2.extras import RealDictCursor, Json
 from cachetools import TTLCache
 
 from threading import Lock
+
+logger = logging.getLogger("VaultSync")
 file_metadata_cache = TTLCache(maxsize=10000, ttl=300)
 _cache_lock = Lock()
 
@@ -232,42 +235,47 @@ def find_romm_game_for_user(conn, user_id: int, target_id: str, target_name: str
     """Searches the RomM library for a match."""
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     
+    query = "SELECT romm_id, name, platform_slug FROM romm_games WHERE user_id = %s AND (name ILIKE %s OR fs_name ILIKE %s)"
+
+    def _cross_platform_warn(res, reason):
+        if platform_slug and res.get('platform_slug') and res['platform_slug'] != platform_slug:
+            logger.warning(
+                f"RomM match crossed platform for user {user_id}: "
+                f"{reason} matched '{res['name']}' on {res['platform_slug']} "
+                f"(expected {platform_slug})"
+            )
+
     # 1. Exact ID Match (for Switch, GC, PSP)
     if target_id:
-        query = "SELECT romm_id, name FROM romm_games WHERE user_id = %s AND (name ILIKE %s OR fs_name ILIKE %s)"
         params = [user_id, f'%{target_id}%', f'%{target_id}%']
-        
+
         if platform_slug:
-            platform_query = query + " AND platform_slug = %s LIMIT 1"
-            platform_params = params + [platform_slug]
-            cursor.execute(platform_query, tuple(platform_params))
+            cursor.execute(query + " AND platform_slug = %s LIMIT 1", tuple(params + [platform_slug]))
             res = cursor.fetchone()
             if res: return res['romm_id']
-            
-        fallback_query = query + " LIMIT 1"
-        cursor.execute(fallback_query, tuple(params))
+
+        cursor.execute(query + " LIMIT 1", tuple(params))
         res = cursor.fetchone()
-        if res: return res['romm_id']
-        
+        if res:
+            _cross_platform_warn(res, f"id={target_id}")
+            return res['romm_id']
+
     # 2. Fuzzy Name Match
     if target_name:
         clean_target = target_name.lower().strip()
-        
-        query = "SELECT romm_id, name FROM romm_games WHERE user_id = %s AND (name ILIKE %s OR fs_name ILIKE %s)"
         params = [user_id, f'%{clean_target}%', f'%{clean_target}%']
-        
+
         if platform_slug:
-            platform_query = query + " AND platform_slug = %s LIMIT 1"
-            platform_params = params + [platform_slug]
-            cursor.execute(platform_query, tuple(platform_params))
+            cursor.execute(query + " AND platform_slug = %s LIMIT 1", tuple(params + [platform_slug]))
             res = cursor.fetchone()
             if res: return res['romm_id']
-        
+
         # Fallback: search across all platforms if platform-specific failed or wasn't provided
         # (Handles cases like GBA games being played on a GameCube emulator)
-        fallback_query = query + " LIMIT 1"
-        cursor.execute(fallback_query, tuple(params))
+        cursor.execute(query + " LIMIT 1", tuple(params))
         res = cursor.fetchone()
-        if res: return res['romm_id']
-        
+        if res:
+            _cross_platform_warn(res, f"name='{clean_target}'")
+            return res['romm_id']
+
     return None

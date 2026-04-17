@@ -1,0 +1,1412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VibeDrift Report &mdash; vaultsync_server</title>
+<style>
+:root {
+  --bg-page: #121214;
+  --bg-surface: #1A1A1C;
+  --bg-surface-hover: #1F1F22;
+  --bg-code: #16161A;
+  --text-primary: #E0E0D8;
+  --text-secondary: #9A9A92;
+  --text-tertiary: #757570;
+  --brand-cyan: #FFD000;
+  --link: #888880;
+  --intent-green: #44DD66;
+  --drift-amber: #C8A000;
+  --drift-orange: #CC7000;
+  --drift-red: #DD3333;
+  --info-blue: #00AAA0;
+  --grade-a: #44DD66;
+  --grade-b: #44DD66;
+  --grade-c: #C8A000;
+  --grade-d: #CC7000;
+  --grade-f: #DD3333;
+  --border: #26262A;
+  --border-subtle: rgba(38, 38, 42, 0.5);
+  --tint-green: rgba(68, 221, 102, 0.04);
+  --tint-amber: rgba(200, 160, 0, 0.03);
+  --tint-orange: rgba(204, 112, 0, 0.04);
+  --tint-red: rgba(221, 51, 51, 0.04);
+  --tint-cyan: rgba(255, 208, 0, 0.02);
+  --tint-blue: rgba(0, 170, 160, 0.04);
+}
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg-page); color: var(--text-primary); font-family: 'JetBrains Mono', 'SF Mono', 'Consolas', monospace; font-size: 14px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+code, .mono { font-family: 'JetBrains Mono', 'SF Mono', 'Consolas', monospace; font-size: 13px; }
+h1, h2, h3, .heading { font-family: 'Space Grotesk', -apple-system, sans-serif; }
+.page { max-width: 960px; margin: 0 auto; padding: 40px 32px; }
+.section { margin-bottom: 48px; }
+.label { font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 16px; }
+.sev-badge { display: inline-block; padding: 2px 8px; font-size: 11px; font-weight: 700; color: var(--bg-page); text-transform: uppercase; letter-spacing: 0.5px; }
+.sticky-header { position: fixed; top: 0; left: 0; right: 0; height: 44px; background: rgba(18,18,20,0.95); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 32px; z-index: 100; opacity: 0; pointer-events: none; transition: opacity 200ms; font-size: 13px; }
+.sticky-header.visible { opacity: 1; pointer-events: auto; }
+details summary { list-style: none; }
+details summary::-webkit-details-marker { display: none; }
+details[open] > summary .chevron { display: inline-block; transform: rotate(90deg); }
+.chevron { display: inline-block; transition: transform 150ms; margin-right: 6px; font-size: 10px; }
+a { color: var(--link); text-decoration: none; }
+a:hover { color: var(--text-primary); }
+[data-scroll-to] { cursor: pointer; }
+[data-scroll-to]:hover { text-decoration: underline; }
+th[data-sort] { cursor: pointer; }
+th[data-sort]:hover { color: var(--text-primary); }
+.export-btn { background: var(--bg-surface); color: var(--text-secondary); border: 1px solid var(--border); padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer; transition: background 150ms, color 150ms; font-family: inherit; letter-spacing: 0.5px; text-transform: uppercase; }
+.export-btn:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
+::selection { background: #FFD000; color: #121214; }
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--bg-page); }
+::-webkit-scrollbar-thumb { background: #3A3A3D; }
+::-webkit-scrollbar-thumb:hover { background: #555; }
+@media (max-width: 768px) {
+  .page { padding: 16px 10px; }
+  .section { margin-bottom: 28px; }
+  .label { font-size: 10px; letter-spacing: 1.5px; margin-bottom: 10px; }
+
+  /* Score hero: stack vertically */
+  .score-layout { flex-direction: column !important; gap: 16px !important; }
+  .score-layout > div { min-width: 0 !important; width: 100% !important; }
+
+  /* Category bars: stack, remove min-widths */
+  .score-layout [style*="min-width:300px"],
+  .score-layout [style*="min-width:280px"],
+  .score-layout [style*="min-width:200px"],
+  .score-layout [style*="min-width:120px"] {
+    min-width: 0 !important; width: 100% !important;
+  }
+
+  /* Radar chart: constrain to viewport */
+  svg[viewBox] { max-width: 100% !important; }
+
+  /* Strongest/Weakest cards: 2-col, tighter */
+  .section > div[style*="display:flex"][style*="gap:12px"] {
+    gap: 8px !important;
+  }
+  .section > div[style*="display:flex"] > div[style*="min-width:160px"] {
+    min-width: 0 !important; flex: 1 !important;
+  }
+
+  /* Findings list: tighter padding */
+  details > div { padding: 8px 10px !important; }
+  details summary { padding: 10px 12px !important; font-size: 13px !important; }
+
+  /* File ranking table: horizontal scroll */
+  table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }
+  table th, table td { padding: 5px 8px !important; font-size: 11px !important; }
+
+  /* Code snippets: wrap text */
+  pre, code { white-space: pre-wrap !important; word-break: break-word !important; font-size: 12px !important; }
+
+  /* Drift coherence bars: full width */
+  .section div[style*="display:flex"][style*="gap:40px"] {
+    flex-direction: column !important; gap: 16px !important;
+  }
+
+  /* Summary + AI section: stack */
+  .section div[style*="display:flex"][style*="gap:20px"] {
+    flex-direction: column !important; gap: 12px !important;
+  }
+
+  /* Sticky header: tighter padding */
+  .sticky-header { padding: 0 12px; font-size: 12px; }
+  .sticky-project { display: none !important; }
+
+  /* Export buttons: smaller */
+  .export-btn { padding: 5px 10px; font-size: 11px; }
+
+  /* Code DNA / ML sections: reduce gap */
+  .section div[style*="gap:10px"] { gap: 6px !important; }
+
+  /* Hide long file paths, truncate */
+  td[data-scroll-to] { max-width: 140px !important; }
+}
+@media (max-width: 480px) {
+  .page { padding: 12px 8px; }
+  body { font-size: 13px; }
+  .label { font-size: 9px; }
+  .sticky-header { height: 38px; }
+  table th, table td { padding: 4px 6px !important; font-size: 10px !important; }
+}
+@media print {
+  body { background: #fff; color: #111; font-size: 11px; line-height: 1.4; }
+  .sticky-header, .export-btn, [data-copy] { display: none !important; }
+  .page { max-width: 100%; padding: 0; }
+  .section { margin-bottom: 24px; page-break-inside: avoid; }
+  details, details[open] > div, details > div { display: block !important; }
+  details > summary { list-style: none; }
+  details > summary .chevron { display: none; }
+  .sev-badge { border: 1px solid currentColor; background: transparent !important; color: inherit !important; }
+  code, .mono { font-size: 10px; }
+  * { color-adjust: exact; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+</style>
+</head>
+<body>
+
+<div class="sticky-header" id="sticky-header">
+  <div class="sticky-project" style="display:flex;align-items:center;gap:8px">
+    <span style="display:inline-block;width:10px;height:10px;background:var(--brand-cyan)"></span>
+    <span style="color:var(--text-primary);font-weight:700;letter-spacing:2px;font-size:12px">VIBEDRIFT</span>
+    <span style="color:var(--text-tertiary)">&middot;</span>
+    <span style="color:var(--text-secondary)">vaultsync_server</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px">
+    <span class="mono" style="font-weight:700;color:var(--grade-b)">80.1/100</span>
+    <span style="padding:2px 8px;border-radius:0;font-size:11px;font-weight:600;background:var(--grade-b)18;color:var(--grade-b)">B</span>
+  </div>
+</div>
+
+<div class="page">
+
+<header id="report-header" style="padding:32px 0 24px;border-bottom:1px solid var(--border)">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
+    <div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="display:inline-block;width:10px;height:10px;background:var(--brand-cyan)"></span><span class="label" style="margin-bottom:0;letter-spacing:2px">VIBEDRIFT REPORT</span></div>
+      <div class="heading" style="font-size:24px;font-weight:700;color:var(--text-primary);text-transform:uppercase;letter-spacing:-0.5px">vaultsync_server</div>
+    </div>
+    <div style="text-align:right;font-size:13px;color:var(--text-secondary)">
+      <div>Apr 14, 2026 &middot; 0.3s</div>
+      <div>30 files &middot; 2,713 LOC</div>
+      <div style="color:var(--text-tertiary)">Python (100%)</div>
+    </div>
+  </div>
+</header>
+
+
+
+
+<section class="section">
+  <div class="label">SCORE OVERVIEW</div>
+  <div class="score-layout" style="display:flex;gap:40px;align-items:flex-start;flex-wrap:wrap">
+    <div style="text-align:center;min-width:120px">
+      <div class="mono" style="font-size:72px;font-weight:800;color:var(--grade-b);line-height:1">80.1</div>
+      <div class="mono" style="font-size:16px;color:var(--text-tertiary)">/ 100</div>
+      <div style="margin-top:8px"><span style="display:inline-block;padding:4px 14px;border-radius:0;font-size:14px;font-weight:600;background:var(--grade-b)18;color:var(--grade-b)">Grade B</span></div>
+    </div>
+    <div style="flex:1;min-width:300px"><div style="display:flex;align-items:center;gap:10px;margin:6px 0">
+      <span style="font-size:13px;color:var(--text-primary);min-width:190px">Architectural Consistency</span>
+      <div style="flex:1;height:6px;border-radius:0;background:var(--border)"><div style="width:67.5%;height:100%;border-radius:0;background:var(--grade-c)"></div></div>
+      <span class="mono" style="font-size:12px;font-weight:600;color:var(--grade-c);min-width:50px;text-align:right">10.8/16</span>
+    </div><div style="display:flex;align-items:center;gap:10px;margin:6px 0">
+      <span style="font-size:13px;color:var(--text-primary);min-width:190px">Security Posture</span>
+      <div style="flex:1;height:6px;border-radius:0;background:var(--border)"><div style="width:100%;height:100%;border-radius:0;background:var(--grade-a)"></div></div>
+      <span class="mono" style="font-size:12px;font-weight:600;color:var(--grade-a);min-width:50px;text-align:right">14/14</span>
+    </div><div style="display:flex;align-items:center;gap:10px;margin:6px 0">
+      <span style="font-size:13px;color:var(--text-primary);min-width:190px">Semantic Duplication</span>
+      <div style="flex:1;height:6px;border-radius:0;background:var(--border)"><div style="width:100%;height:100%;border-radius:0;background:var(--grade-a)"></div></div>
+      <span class="mono" style="font-size:12px;font-weight:600;color:var(--grade-a);min-width:50px;text-align:right">14/14</span>
+    </div><div style="display:flex;align-items:center;gap:10px;margin:6px 0">
+      <span style="font-size:13px;color:var(--text-primary);min-width:190px">Convention Drift</span>
+      <div style="flex:1;height:6px;border-radius:0;background:var(--border)"><div style="width:100%;height:100%;border-radius:0;background:var(--grade-a)"></div></div>
+      <span class="mono" style="font-size:12px;font-weight:600;color:var(--grade-a);min-width:50px;text-align:right">12/12</span>
+    </div><div style="display:flex;align-items:center;gap:10px;margin:6px 0">
+      <span style="font-size:13px;color:var(--text-primary);min-width:190px">Phantom Scaffolding</span>
+      <div style="flex:1;height:6px;border-radius:0;background:var(--border)"><div style="width:100%;height:100%;border-radius:0;background:var(--grade-a)"></div></div>
+      <span class="mono" style="font-size:12px;font-weight:600;color:var(--grade-a);min-width:50px;text-align:right">12/12</span>
+    </div></div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="label">DRIFT FINGERPRINT</div>
+  <p style="font-size:13px;color:var(--text-secondary);margin-bottom:20px;line-height:1.6">
+    This radar shows how well your codebase maintains consistency across 8 drift categories.
+    The outer edge represents a perfect score in each category. Points closer to the center indicate more drift.
+    A balanced shape means consistent quality; an uneven shape reveals where drift concentrates.
+  </p>
+  <svg viewBox="0 0 520 440" style="width:100%;max-width:560px;height:auto;margin:0 auto;display:block"><circle cx="260" cy="200" r="32.5" fill="none" stroke="#1E2A3A" stroke-width="0.5" stroke-dasharray="3,3"/><text x="264" y="171.5" fill="#3A4555" font-size="9" font-family="-apple-system,sans-serif">25%</text><circle cx="260" cy="200" r="65" fill="none" stroke="#1E2A3A" stroke-width="0.5" stroke-dasharray="3,3"/><text x="264" y="139" fill="#3A4555" font-size="9" font-family="-apple-system,sans-serif">50%</text><circle cx="260" cy="200" r="97.5" fill="none" stroke="#1E2A3A" stroke-width="0.5" stroke-dasharray="3,3"/><text x="264" y="106.5" fill="#3A4555" font-size="9" font-family="-apple-system,sans-serif">75%</text><circle cx="260" cy="200" r="130" fill="none" stroke="#1E2A3A" stroke-width="1" stroke-dasharray="none"/><line x1="260" y1="200" x2="260" y2="70" stroke="#1E2A3A" stroke-width="0.5"/><line x1="260" y1="200" x2="383.63734711837" y2="159.82779073125684" stroke="#1E2A3A" stroke-width="0.5"/><line x1="260" y1="200" x2="336.4120827980215" y2="305.1722092687432" stroke="#1E2A3A" stroke-width="0.5"/><line x1="260" y1="200" x2="183.5879172019785" y2="305.1722092687432" stroke="#1E2A3A" stroke-width="0.5"/><line x1="260" y1="200" x2="136.36265288163003" y2="159.82779073125687" stroke="#1E2A3A" stroke-width="0.5"/><polygon points="260,112.25 383.63734711837,159.82779073125684 336.4120827980215,305.1722092687432 183.5879172019785,305.1722092687432 136.36265288163003,159.82779073125687" fill="rgba(255,208,0,0.04)" stroke="rgba(255,208,0,0.3)" stroke-width="1.5"/><circle cx="260" cy="112.25" r="5" fill="var(--text-secondary)" stroke="var(--bg-page)" stroke-width="2"/><circle cx="383.63734711837" cy="159.82779073125684" r="5" fill="var(--text-secondary)" stroke="var(--bg-page)" stroke-width="2"/><circle cx="336.4120827980215" cy="305.1722092687432" r="5" fill="var(--text-secondary)" stroke="var(--bg-page)" stroke-width="2"/><circle cx="183.5879172019785" cy="305.1722092687432" r="5" fill="var(--text-secondary)" stroke="var(--bg-page)" stroke-width="2"/><circle cx="136.36265288163003" cy="159.82779073125687" r="5" fill="var(--text-secondary)" stroke="var(--bg-page)" stroke-width="2"/><text x="260" y="28" fill="var(--grade-c)" font-size="12" font-weight="600" font-family="-apple-system,sans-serif" text-anchor="middle" dominant-baseline="middle">Architecture</text><text x="260" y="43" fill="#5A6A7E" font-size="11" font-weight="500" font-family="'SF Mono',Consolas,monospace" text-anchor="middle" dominant-baseline="middle">10.8/16 (1 issues)</text><text x="416.9243251887003" y="142.01219592813368" fill="var(--grade-a)" font-size="12" font-weight="600" font-family="-apple-system,sans-serif" text-anchor="start" dominant-baseline="middle">Security</text><text x="416.9243251887003" y="157.01219592813368" fill="#5A6A7E" font-size="11" font-weight="500" font-family="'SF Mono',Consolas,monospace" text-anchor="start" dominant-baseline="middle">14/14 </text><text x="356.98456662825805" y="326.4878040718663" fill="var(--grade-a)" font-size="12" font-weight="600" font-family="-apple-system,sans-serif" text-anchor="start" dominant-baseline="middle">Duplication</text><text x="356.98456662825805" y="341.4878040718663" fill="#5A6A7E" font-size="11" font-weight="500" font-family="'SF Mono',Consolas,monospace" text-anchor="start" dominant-baseline="middle">14/14 </text><text x="163.01543337174195" y="326.4878040718663" fill="var(--grade-a)" font-size="12" font-weight="600" font-family="-apple-system,sans-serif" text-anchor="end" dominant-baseline="middle">Conventions</text><text x="163.01543337174195" y="341.4878040718663" fill="#5A6A7E" font-size="11" font-weight="500" font-family="'SF Mono',Consolas,monospace" text-anchor="end" dominant-baseline="middle">12/12 </text><text x="103.07567481129965" y="142.0121959281337" fill="var(--grade-a)" font-size="12" font-weight="600" font-family="-apple-system,sans-serif" text-anchor="end" dominant-baseline="middle">Scaffolding</text><text x="103.07567481129965" y="157.0121959281337" fill="#5A6A7E" font-size="11" font-weight="500" font-family="'SF Mono',Consolas,monospace" text-anchor="end" dominant-baseline="middle">12/12 </text></svg>
+  <div style="display:flex;gap:20px;justify-content:center;margin-top:20px;flex-wrap:wrap">
+    <div style="background:var(--bg-surface);border-radius:0;padding:12px 18px;text-align:center;min-width:160px">
+      <div style="font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Strongest</div>
+      <div style="font-size:15px;font-weight:600;color:var(--intent-green)">Security</div>
+      <div class="mono" style="font-size:12px;color:var(--text-secondary)">100% health</div>
+    </div>
+    <div style="background:var(--bg-surface);border-radius:0;padding:12px 18px;text-align:center;min-width:160px">
+      <div style="font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Needs Attention</div>
+      <div style="font-size:15px;font-weight:600;color:var(--drift-orange)">Architecture</div>
+      <div class="mono" style="font-size:12px;color:var(--text-secondary)">68% health &middot; 1 issues</div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="label">CODEBASE INTENT</div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap"><div style="background:var(--bg-surface);border-left:3px solid var(--intent-green);border-radius:0;padding:14px 16px;min-width:160px;flex:1">
+      <div class="label" style="color:var(--text-tertiary)">Data Access</div>
+      <div style="font-size:14px;font-weight:500;color:var(--text-primary);margin:4px 0">raw SQL queries</div>
+      <div class="mono" style="font-size:12px;color:var(--intent-green)">3 of 4 files (75%)</div>
+    </div><div style="background:var(--bg-surface);border-left:3px solid var(--intent-green);border-radius:0;padding:14px 16px;min-width:160px;flex:1">
+      <div class="label" style="color:var(--text-tertiary)">logging_consistency</div>
+      <div style="font-size:14px;font-weight:500;color:var(--text-primary);margin:4px 0">structured logger (winston/pino/bunyan/log4js/tracing)</div>
+      <div class="mono" style="font-size:12px;color:var(--intent-green)">9 of 10 files (90%)</div>
+    </div><div style="background:var(--bg-surface);border-left:3px solid var(--intent-green);border-radius:0;padding:14px 16px;min-width:160px;flex:1">
+      <div class="label" style="color:var(--text-tertiary)">Architecture</div>
+      <div style="font-size:14px;font-weight:500;color:var(--text-primary);margin:4px 0">orm</div>
+      <div class="mono" style="font-size:12px;color:var(--intent-green)">3 of 5 files (60%)</div>
+    </div></div>
+</section>
+
+<section class="section">
+  <div class="label">INTENT COHERENCE</div>
+  <div style="display:flex;gap:20px;margin-bottom:16px;font-size:12px;color:var(--text-secondary);flex-wrap:wrap;align-items:center">
+    <span style="display:flex;align-items:center;gap:5px"><span style="color:var(--intent-green);font-size:14px">&#9679;</span> Follows dominant pattern</span>
+    <span style="display:flex;align-items:center;gap:5px"><span style="color:var(--drift-amber);font-size:13px">&#9670;</span> Deviates from intent</span>
+    <span style="display:flex;align-items:center;gap:5px"><span style="color:var(--drift-orange);font-size:13px">&#9670;</span> Multiple deviations</span>
+    <span style="display:flex;align-items:center;gap:5px"><span style="color:var(--drift-red);font-size:13px">&#9670;</span> Critical drift</span>
+  </div>
+  <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="border-bottom:1px solid var(--border)">
+        <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.5px;font-weight:600">File</th>
+        <th style="padding:6px 12px;font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.5px;text-align:center;font-weight:600">Data Access</th><th style="padding:6px 12px;font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.5px;text-align:center;font-weight:600">Architecture</th>
+        <th style="padding:6px 12px;text-align:right;font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Align</th>
+        <th style="padding:6px 12px;text-align:left;font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Issue</th>
+      </tr></thead>
+      <tbody>
+        <tr style="background:var(--tint-amber)" id="file-app-routers-files-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-app-routers-files-py">app/routers/files.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--drift-orange);font-size:13px" data-tooltip="raw_sql">&#9670;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--drift-amber)">50%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--text-secondary);max-width:250px">Architecture: raw_sql</td>
+    </tr><tr style="background:var(--tint-amber)" id="file-verify-sync-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-verify-sync-py">verify_sync.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--drift-orange);font-size:13px" data-tooltip="inline HTTP client calls">&#9670;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--drift-amber)">50%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--text-secondary);max-width:250px">Data Access: inline HTTP client calls</td>
+    </tr><tr style="background:var(--tint-amber)" id="file-test-api-endpoints-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-test-api-endpoints-py">test_api_endpoints.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--drift-orange);font-size:13px" data-tooltip="http_client">&#9670;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--drift-amber)">50%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--text-secondary);max-width:250px">Architecture: http_client</td>
+    </tr>
+        <tr style="background:transparent" id="file-app-config-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-app-config-py">app/config.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-cleanup-switch-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-cleanup-switch-py">cleanup_switch.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-test-db-schema-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-test-db-schema-py">test_db_schema.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr>
+        <tr><td colspan="5" style="padding:0"><details style="margin:0">
+         <summary style="cursor:pointer;padding:8px 16px;font-size:12px;color:var(--text-tertiary);list-style:none;display:flex;align-items:center;gap:6px;background:rgba(255,255,255,0.02)">
+           <span class="chevron">&#9654;</span> 24 more files at 100% alignment
+         </summary>
+         <table style="width:100%;border-collapse:collapse"><tr style="background:transparent" id="file-wipe-all-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-wipe-all-py">wipe_all.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-test-refresh-tokens-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-test-refresh-tokens-py">test_refresh_tokens.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-app-routers-auth-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-app-routers-auth-py">app/routers/auth.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-app-database-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-app-database-py">app/database.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-clean-retroarch-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-clean-retroarch-py">clean_retroarch.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-test-sse-broadcast-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-test-sse-broadcast-py">test_sse_broadcast.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-app-crud-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-app-crud-py">app/crud.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-check-db-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-check-db-py">check_db.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-app-services-event-notifier-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-app-services-event-notifier-py">app/services/event_notifier.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-app-services-reassembly-service-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-app-services-reassembly-service-py">app/services/reassembly_service.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-app-services-title-db-service-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-app-services-title-db-service-py">app/services/title_db_service.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-app-main-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-app-main-py">app/main.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-app-routers-events-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-app-routers-events-py">app/routers/events.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-test-logic-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-test-logic-py">test_logic.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-app-routers-recovery-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-app-routers-recovery-py">app/routers/recovery.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-app-utils-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-app-utils-py">app/utils.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-app-services-version-manager-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-app-services-version-manager-py">app/services/version_manager.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-app-dependencies-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-app-dependencies-py">app/dependencies.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-app-limiter-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-app-limiter-py">app/limiter.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-app-models-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-app-models-py">app/models.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-app-routers---init---py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-app-routers---init---py">app/routers/__init__.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-app-services-romm-client-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-app-services-romm-client-py">app/services/romm_client.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-test-reassembly-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-test-reassembly-py">test_reassembly.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr><tr style="background:transparent" id="file-test-title-db-py">
+      <td class="mono" style="padding:6px 12px;font-size:12px;color:var(--text-secondary);white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis" data-scroll-to="rank-test-title-db-py">test_title_db.py</td>
+      <td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td><td style="text-align:center;padding:6px 12px;color:var(--intent-green);font-size:14px">&#9679;</td>
+      <td class="mono" style="padding:6px 12px;text-align:right;font-weight:600;color:var(--intent-green)">100%</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--intent-green)">Fully aligned</td>
+    </tr></table>
+       </details></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div style="margin-top:16px">
+    <div style="display:flex;height:6px;border-radius:0;overflow:hidden;gap:2px"><div style="width:90%;height:100%;background:var(--intent-green)"></div><div style="width:10%;height:100%;background:var(--drift-amber)"></div></div>
+    <div style="display:flex;gap:16px;margin-top:6px;font-size:12px;color:var(--text-tertiary);flex-wrap:wrap">
+      <span style="color:var(--intent-green)">27 aligned</span>
+      <span style="color:var(--drift-amber)">3 partial</span>
+      
+      
+      <span style="margin-left:auto;font-weight:500;color:var(--text-secondary)">90% intent coherence</span>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="label">FIX FIRST</div>
+  <div style="background:var(--bg-surface);border-radius:0;padding:20px 24px;margin-bottom:12px;border-left:3px solid var(--drift-orange)">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <span class="mono" style="font-size:28px;font-weight:800;color:var(--text-tertiary)">1</span>
+        <span class="sev-badge" style="background:var(--drift-orange)">HIGH</span>
+      </div>
+      <p style="font-size:15px;font-weight:500;color:var(--text-primary);line-height:1.6;margin:0 0 8px">In verify_sync.py: replace inline HTTP client calls with the dominant raw SQL queries pattern (used by 3/4 files). See verify_sync.py:64.</p>
+      <p style="font-size:13px;color:var(--text-secondary);margin:0 0 8px">Impact: Resolves 1 deviating file in architectural consistency. Follow the pattern in event_notifier.py.</p>
+      <div class="mono" style="font-size:12px;color:var(--text-secondary)">verify_sync.py</div>
+    </div><div style="background:var(--bg-surface);border-radius:0;padding:20px 24px;margin-bottom:12px;border-left:3px solid var(--drift-orange)">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <span class="mono" style="font-size:28px;font-weight:800;color:var(--text-tertiary)">2</span>
+        <span class="sev-badge" style="background:var(--drift-orange)">HIGH</span>
+      </div>
+      <p style="font-size:15px;font-weight:500;color:var(--text-primary);line-height:1.6;margin:0 0 8px">Standardize on structured logger (winston/pino/bunyan/log4js/tracing). Mixed logging forces log aggregation to handle multiple output shapes.</p>
+      <p style="font-size:13px;color:var(--text-secondary);margin:0 0 8px">Impact: Resolves 1 deviating file in logging consistency. Follow the pattern in event_notifier.py.</p>
+      <div class="mono" style="font-size:12px;color:var(--text-secondary)">app/services/reassembly_service.py</div>
+    </div>
+</section>
+
+<section class="section">
+  <div class="label">DRIFT FINDINGS <span style="font-size:11px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--text-tertiary);margin-left:8px">1 cross-file contradictions</span></div>
+  <details open style="margin-bottom:8px">
+      <summary style="cursor:pointer;padding:12px 18px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:14px;font-weight:600;color:var(--text-primary);list-style:none;border:1px solid var(--border)">
+        <span class="chevron">&#9654;</span>
+        Architectural contradictions
+        <span style="margin-left:auto;font-size:12px;color:var(--text-tertiary)">1 finding</span>
+      </summary>
+      <div style="padding:8px 0"><details style="background:var(--bg-surface);border-radius:0;margin-bottom:10px;border:1px solid var(--border)">
+        <summary style="cursor:pointer;padding:16px 20px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;list-style:none">
+          <span class="chevron">&#9654;</span>
+          <span class="sev-badge" style="background:var(--drift-orange)">WARNING</span>
+          <span style="font-size:14px;font-weight:500;color:var(--text-primary);flex:1">./: 1 file(s) use inline HTTP client calls while 3 use raw SQL queries</span>
+          <span class="mono" style="font-size:12px;color:var(--text-tertiary)">3/4</span>
+        </summary>
+        <div style="padding:4px 20px 20px">
+          <div style="background:var(--tint-green);border-left:3px solid var(--intent-green);border-radius:0;padding:12px 16px;margin:8px 0">
+        <div class="label" style="color:var(--intent-green);margin-bottom:6px">INTENT (DOMINANT) &mdash; raw SQL queries &mdash; 3 files</div>
+      </div>
+          <div style="background:var(--tint-orange);border-left:3px solid var(--drift-orange);border-radius:0;margin:8px 0">
+      <details>
+        <summary style="cursor:pointer;padding:10px 16px;list-style:none;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <span class="chevron">&#9654;</span>
+          <span class="label" style="color:var(--drift-orange);margin:0">DRIFT &mdash; inline HTTP client calls</span>
+          <span class="mono" style="font-size:12px;color:var(--text-secondary);margin-left:8px">verify_sync.py</span>
+          <span style="font-size:11px;color:var(--text-tertiary);margin-left:auto">expected: <span style="color:var(--intent-green)">raw SQL queries</span></span>
+        </summary>
+        <div style="padding:4px 16px 12px"><div style="background:var(--bg-code);padding:6px 12px;border-radius:0;margin:4px 0;overflow-x:auto" class="mono"><span style="color:var(--text-tertiary);margin-right:12px;user-select:none">64</span>resp = requests.post(f&quot;{base_url}/login&quot;, json={&quot;email&quot;: email, &quot;password&quot;: password})</div><div style="background:var(--bg-code);padding:6px 12px;border-radius:0;margin:4px 0;overflow-x:auto" class="mono"><span style="color:var(--text-tertiary);margin-right:12px;user-select:none">75</span>resp = requests.post(f&quot;{base_url}/api/v1/download&quot;, json={&quot;filename&quot;: remote_path}, headers=headers)</div></div>
+      </details>
+    </div>
+          <div style="margin:12px 0">
+    <div style="display:flex;height:6px;border-radius:0;overflow:hidden;gap:2px">
+      <div style="width:75%;background:var(--intent-green);border-radius:0"></div>
+      <div style="width:25%;background:var(--drift-orange);border-radius:0"></div>
+    </div>
+    <div style="display:flex;gap:16px;margin-top:4px;font-size:11px;color:var(--text-tertiary)">
+      <span>raw SQL queries (3)</span>
+      <span>Deviating (1)</span>
+      <span style="margin-left:auto">75% consistent</span>
+    </div>
+  </div>
+          <div style="margin-top:12px;padding:10px 16px;background:var(--tint-cyan);border-left:3px solid var(--border);border-radius:0;font-size:14px;line-height:1.6;color:var(--text-primary)">
+        <span style="color:var(--text-secondary);font-weight:700;margin-right:4px">&rarr;</span> In verify_sync.py: replace inline HTTP client calls with the dominant raw SQL queries pattern (used by 3/4 files). Example: verify_sync.py:64 currently uses inline HTTP client calls.
+      </div>
+          
+        </div>
+      </details></div>
+    </details>
+</section>
+
+<section class="section">
+  <div class="label">CODE DNA <span style="font-size:11px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--intent-green);margin-left:8px">Layer 1.7 &middot; 3 findings &middot; 96 functions &middot; 36ms</span></div>
+  <details style="margin-bottom:8px"><summary style="cursor:pointer;font-size:13px;font-weight:500;color:var(--text-primary);list-style:none;padding:6px 0"><span class="chevron">&#9654;</span> Deviation analysis <span style="color:var(--text-tertiary);font-weight:400">2</span></summary><div style="padding:4px 0 4px 16px"><div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border-subtle)">
+      <span class="sev-badge" style="background:var(--drift-amber);min-width:80px;text-align:center">UNCERTAIN</span>
+      <span class="mono" style="font-size:12px;color:var(--text-secondary);flex:1">app/routers/files.py</span>
+      <span style="font-size:12px;color:var(--text-tertiary)">raw_sql vs orm</span>
+    </div><div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border-subtle)">
+      <span class="sev-badge" style="background:var(--intent-green);min-width:80px;text-align:center">JUSTIFIED</span>
+      <span class="mono" style="font-size:12px;color:var(--text-secondary);flex:1">test_api_endpoints.py</span>
+      <span style="font-size:12px;color:var(--text-tertiary)">http_client vs orm</span>
+    </div></div></details>
+</section>
+
+
+
+<section class="section">
+  <div class="label">FILE RANKING <span style="font-size:11px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--text-tertiary);margin-left:8px">30 files scanned</span></div>
+  <details open style="margin-bottom:4px" id="rank-app-config-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--drift-red)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">app/config.py</span>
+        <span class="mono" style="font-weight:600;color:var(--drift-red)">18/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--drift-red)">F</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 10 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Env var DB_HOST used in code but missing from .env.example</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Env var DB_NAME used in code but missing from .env.example</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Env var DB_USER used in code but missing from .env.example</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Env var DB_PASS used in code but missing from .env.example</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-cleanup-switch-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--drift-orange)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">cleanup_switch.py</span>
+        <span class="mono" style="font-weight:600;color:var(--drift-orange)">30/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--drift-orange)">D</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 7 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>5 files use camelCase while majority uses snake_case (H=0.44)</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Env var DB_HOST used in code but missing from .env.example</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Env var DB_NAME used in code but missing from .env.example</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Env var DB_USER used in code but missing from .env.example</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-app-routers-files-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--drift-orange)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">app/routers/files.py</span>
+        <span class="mono" style="font-weight:600;color:var(--drift-orange)">49/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--drift-orange)">D</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">2 drift &middot; 5 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--drift-orange);font-size:10px;font-weight:600;min-width:42px">&#9670; DRIFT</span>
+        <span>Pattern drift: app/routers/files.py uses raw_sql while 3/5 files use orm</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--drift-orange);font-size:10px;font-weight:600;min-width:42px">&#9670; DRIFT</span>
+        <span>Mixed patterns in app/routers/files.py: raw_sql: 51%, orm: 49% — file mixes architectural ...</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>8 Python functions appear unused: update_file_sync, revoke_all_user_refresh_tokens, auth_m...</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>6 functions exceed 50 lines</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Function &quot;_local_match&quot; has cognitive complexity 10 (threshold: 6)</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Function &quot;upload_fragment&quot; has cognitive complexity 7 (threshold: 6)</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-test-db-schema-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--drift-orange)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">test_db_schema.py</span>
+        <span class="mono" style="font-weight:600;color:var(--drift-orange)">49/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--drift-orange)">D</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 4 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Env var DB_HOST used in code but missing from .env.example</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Env var DB_NAME used in code but missing from .env.example</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Env var DB_USER used in code but missing from .env.example</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Env var DB_PASS used in code but missing from .env.example</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-wipe-all-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--drift-orange)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">wipe_all.py</span>
+        <span class="mono" style="font-weight:600;color:var(--drift-orange)">49/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--drift-orange)">D</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 4 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Env var DB_HOST used in code but missing from .env.example</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Env var DB_NAME used in code but missing from .env.example</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Env var DB_USER used in code but missing from .env.example</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Env var DB_PASS used in code but missing from .env.example</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-verify-sync-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--drift-orange)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">verify_sync.py</span>
+        <span class="mono" style="font-weight:600;color:var(--drift-orange)">50/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--drift-orange)">C</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">1 drift &middot; 2 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--drift-orange);font-size:10px;font-weight:600;min-width:42px">&#9670; DRIFT</span>
+        <span>DRIFT: ./: 1 file(s) use inline HTTP client calls while 3 use raw SQL queries</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>6 functions exceed 50 lines</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Function &quot;run_verify&quot; has cognitive complexity 13 (threshold: 10)</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-test-refresh-tokens-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--drift-amber)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">test_refresh_tokens.py</span>
+        <span class="mono" style="font-weight:600;color:var(--drift-amber)">51/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--drift-amber)">C</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 2 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Potential hardcoded password in test_refresh_tokens.py:8</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>6 functions exceed 50 lines</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-app-routers-auth-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--drift-amber)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">app/routers/auth.py</span>
+        <span class="mono" style="font-weight:600;color:var(--drift-amber)">65/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--drift-amber)">C</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 5 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>5 files use camelCase while majority uses snake_case (H=0.44)</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>8 Python functions appear unused: update_file_sync, revoke_all_user_refresh_tokens, auth_m...</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>4 potentially unreachable code blocks after return/throw</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Function &quot;login&quot; has cognitive complexity 10 (threshold: 6)</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-app-database-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--drift-amber)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">app/database.py</span>
+        <span class="mono" style="font-weight:600;color:var(--drift-amber)">67/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--drift-amber)">C</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 2 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>6 functions exceed 50 lines</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>3 function(s) where the leading verb doesn't match the body's control structure</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-clean-retroarch-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--drift-amber)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">clean_retroarch.py</span>
+        <span class="mono" style="font-weight:600;color:var(--drift-amber)">68/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--drift-amber)">C</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 2 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>6 functions exceed 50 lines</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Function &quot;migrate_retroarch_saves&quot; has cognitive complexity 10 (threshold: 6)</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-test-sse-broadcast-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--drift-amber)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">test_sse_broadcast.py</span>
+        <span class="mono" style="font-weight:600;color:var(--drift-amber)">71/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--drift-amber)">C</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 2 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Potential hardcoded password in test_sse_broadcast.py:28</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Function &quot;test_sse_broadcast&quot; has cognitive complexity 7 (threshold: 6)</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-app-crud-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--grade-b)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">app/crud.py</span>
+        <span class="mono" style="font-weight:600;color:var(--grade-b)">80/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--grade-b)">B</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 2 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>8 Python functions appear unused: update_file_sync, revoke_all_user_refresh_tokens, auth_m...</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>53 exported functions lack documentation (~1.8 per file)</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-test-api-endpoints-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--grade-b)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">test_api_endpoints.py</span>
+        <span class="mono" style="font-weight:600;color:var(--grade-b)">81/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--grade-b)">B</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">1 drift &middot; 0 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--drift-orange);font-size:10px;font-weight:600;min-width:42px">&#9670; DRIFT</span>
+        <span>Pattern drift: test_api_endpoints.py uses http_client while 3/5 files use orm</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-check-db-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--grade-b)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">check_db.py</span>
+        <span class="mono" style="font-weight:600;color:var(--grade-b)">82/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--grade-b)">B</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 2 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>3 function(s) where the leading verb doesn't match the body's control structure</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Function &quot;check_files&quot; has cognitive complexity 12 (threshold: 10)</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-app-services-event-notifier-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--grade-b)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">app/services/event_notifier.py</span>
+        <span class="mono" style="font-weight:600;color:var(--grade-b)">86/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--grade-b)">B</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 2 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>5 files use camelCase while majority uses snake_case (H=0.44)</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Function &quot;generator&quot; has cognitive complexity 7 (threshold: 6)</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-app-services-reassembly-service-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--grade-b)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">app/services/reassembly_service.py</span>
+        <span class="mono" style="font-weight:600;color:var(--grade-b)">86/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--grade-b)">B</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">1 drift &middot; 0 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--drift-orange);font-size:10px;font-weight:600;min-width:42px">&#9670; DRIFT</span>
+        <span>DRIFT: 1 file(s) use Python logging module while 9 use structured logger (winston/pino/bun...</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-app-services-title-db-service-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--grade-b)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">app/services/title_db_service.py</span>
+        <span class="mono" style="font-weight:600;color:var(--grade-b)">86/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--grade-b)">B</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 2 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>5 files use camelCase while majority uses snake_case (H=0.44)</span>
+      </div><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Function &quot;_load_json&quot; has cognitive complexity 9 (threshold: 6)</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-app-main-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--grade-b)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">app/main.py</span>
+        <span class="mono" style="font-weight:600;color:var(--grade-b)">87/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--grade-b)">B</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 1 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>4 potentially unreachable code blocks after return/throw</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-app-routers-events-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--grade-b)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">app/routers/events.py</span>
+        <span class="mono" style="font-weight:600;color:var(--grade-b)">87/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--grade-b)">B</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 1 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>4 potentially unreachable code blocks after return/throw</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-test-logic-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--grade-b)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">test_logic.py</span>
+        <span class="mono" style="font-weight:600;color:var(--grade-b)">89/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--grade-b)">B</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 1 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>5 files use camelCase while majority uses snake_case (H=0.44)</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-app-routers-recovery-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--grade-b)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">app/routers/recovery.py</span>
+        <span class="mono" style="font-weight:600;color:var(--grade-b)">90/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--grade-b)">A</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 1 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>8 Python functions appear unused: update_file_sync, revoke_all_user_refresh_tokens, auth_m...</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-app-utils-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--grade-a)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">app/utils.py</span>
+        <span class="mono" style="font-weight:600;color:var(--grade-a)">96/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--grade-a)">A</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 1 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>3 function(s) where the leading verb doesn't match the body's control structure</span>
+      </div></div>
+    </details><details  style="margin-bottom:4px" id="rank-app-services-version-manager-py">
+      <summary style="cursor:pointer;padding:10px 16px;background:var(--bg-surface);border-radius:0;display:flex;align-items:center;gap:10px;font-size:13px;border:1px solid var(--border);list-style:none">
+        <div style="width:4px;height:22px;border-radius:2px;background:var(--grade-a)"></div>
+        <span class="mono" style="color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">app/services/version_manager.py</span>
+        <span class="mono" style="font-weight:600;color:var(--grade-a)">97/100</span>
+        <span style="font-size:12px;font-weight:600;color:var(--grade-a)">A</span>
+        <span style="font-size:11px;color:var(--text-tertiary)">0 drift &middot; 1 static</span>
+      </summary>
+      <div style="padding:6px 16px 10px 32px"><div style="padding:3px 0;font-size:12px;color:var(--text-secondary);display:flex;align-items:baseline;gap:6px">
+        <span style="color:var(--text-tertiary);font-size:10px;font-weight:600;min-width:42px">&#9679; STATIC</span>
+        <span>Function &quot;list_versions&quot; has cognitive complexity 7 (threshold: 6)</span>
+      </div></div>
+    </details>
+  <details style="margin-top:8px">
+    <summary style="cursor:pointer;padding:8px 16px;font-size:12px;color:var(--text-tertiary);list-style:none">&#9472;&#9472; 7 files with no findings &#9472;&#9472;</summary>
+    <div style="padding:4px 16px;font-size:12px;color:var(--text-tertiary)" class="mono"><div style="padding:1px 0">app/dependencies.py <span style="color:var(--intent-green)">100/100 A &#10003;</span></div><div style="padding:1px 0">app/limiter.py <span style="color:var(--intent-green)">100/100 A &#10003;</span></div><div style="padding:1px 0">app/models.py <span style="color:var(--intent-green)">100/100 A &#10003;</span></div><div style="padding:1px 0">app/routers/__init__.py <span style="color:var(--intent-green)">100/100 A &#10003;</span></div><div style="padding:1px 0">app/services/romm_client.py <span style="color:var(--intent-green)">100/100 A &#10003;</span></div><div style="padding:1px 0">test_reassembly.py <span style="color:var(--intent-green)">100/100 A &#10003;</span></div><div style="padding:1px 0">test_title_db.py <span style="color:var(--intent-green)">100/100 A &#10003;</span></div></div>
+  </details>
+</section>
+
+
+
+<section class="section">
+  <div class="label">STATIC ANALYSIS <span style="font-size:11px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--text-tertiary);margin-left:8px">33 findings</span></div>
+  <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="border-bottom:1px solid var(--border)">
+        <th style="text-align:left;padding:6px 10px;font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.5px;font-weight:600" data-sort>Sev</th>
+        <th style="text-align:left;padding:6px 10px;font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.5px;font-weight:600" data-sort>Analyzer</th>
+        <th style="text-align:left;padding:6px 10px;font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Finding</th>
+        <th style="text-align:left;padding:6px 10px;font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.5px;font-weight:600">File</th>
+        <th style="text-align:right;padding:6px 10px;font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.5px;font-weight:600">Conf</th>
+      </tr></thead>
+      <tbody><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-orange);font-size:10px">ERROR</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">security</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Potential hardcoded password in test_refresh_tokens.py:8</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">test_refresh_tokens.py:8</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">75%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-orange);font-size:10px">ERROR</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">security</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Potential hardcoded password in test_sse_broadcast.py:28</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">test_sse_broadcast.py:28</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">75%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-orange);font-size:10px">ERROR</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">intent-clarity</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">6 functions exceed 50 lines</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/database.py:46</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">85%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-amber);font-size:10px">WARN</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">naming</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">5 files use camelCase while majority uses snake_case (H=0.44)</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/routers/auth.py</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">56%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-amber);font-size:10px">WARN</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">dead-code</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">8 Python functions appear unused: update_file_sync, revoke_all_user_refresh_toke...</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/crud.py:108</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">50%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-amber);font-size:10px">WARN</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">dead-code</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">4 potentially unreachable code blocks after return/throw</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/main.py:59</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">65%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-amber);font-size:10px">WARN</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">dependencies</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">5 potentially unused Python packages: python-multipart, bcrypt, python-jose, psy...</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">requirements.txt</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">65%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-amber);font-size:10px">WARN</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">config-drift</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Env var DB_HOST used in code but missing from .env.example</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/config.py:16</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">85%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-amber);font-size:10px">WARN</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">config-drift</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Env var DB_NAME used in code but missing from .env.example</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/config.py:17</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">85%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-amber);font-size:10px">WARN</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">config-drift</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Env var DB_USER used in code but missing from .env.example</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/config.py:18</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">85%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-amber);font-size:10px">WARN</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">config-drift</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Env var DB_PASS used in code but missing from .env.example</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/config.py:19</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">85%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-amber);font-size:10px">WARN</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">config-drift</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Env var REDIS_HOST used in code but missing from .env.example</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/config.py:22</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">85%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-amber);font-size:10px">WARN</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">config-drift</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Env var REDIS_PORT used in code but missing from .env.example</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/config.py:23</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">85%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-amber);font-size:10px">WARN</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">config-drift</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Env var VAULTSYNC_CORS_ORIGINS used in code but missing from .env.example</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/config.py:42</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">85%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-amber);font-size:10px">WARN</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">config-drift</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Env var ROMM_URL used in code but missing from .env.example</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/config.py:45</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">85%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-amber);font-size:10px">WARN</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">config-drift</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Env var ROMM_API_KEY used in code but missing from .env.example</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/config.py:46</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">85%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-amber);font-size:10px">WARN</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">config-drift</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">9 env vars used in code but missing from .env.example</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap"></td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">85%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-amber);font-size:10px">WARN</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">intent-clarity</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">53 exported functions lack documentation (~1.8 per file)</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/config.py:31</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">55%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-amber);font-size:10px">WARN</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">complexity</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Function &quot;run_verify&quot; has cognitive complexity 13 (threshold: 10)</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">verify_sync.py:61</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">75%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--drift-amber);font-size:10px">WARN</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">complexity</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Function &quot;check_files&quot; has cognitive complexity 12 (threshold: 10)</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">check_db.py:11</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">75%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--info-blue);font-size:10px">INFO</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">config-drift</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">3 env var(s) declared in .env.example but never referenced in code: POSTGRES_PAS...</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap"></td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">70%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--info-blue);font-size:10px">INFO</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">intent-clarity</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">3 function(s) where the leading verb doesn't match the body's control structure</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/database.py:38</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">60%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--info-blue);font-size:10px">INFO</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">complexity</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Function &quot;login&quot; has cognitive complexity 10 (threshold: 6)</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/routers/auth.py:74</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">50%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--info-blue);font-size:10px">INFO</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">complexity</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Function &quot;_local_match&quot; has cognitive complexity 10 (threshold: 6)</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/routers/files.py:401</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">50%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--info-blue);font-size:10px">INFO</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">complexity</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Function &quot;migrate_retroarch_saves&quot; has cognitive complexity 10 (threshold: 6)</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">clean_retroarch.py:40</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">50%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--info-blue);font-size:10px">INFO</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">complexity</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Function &quot;_load_json&quot; has cognitive complexity 9 (threshold: 6)</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/services/title_db_service.py:50</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">50%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--info-blue);font-size:10px">INFO</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">complexity</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Function &quot;cleanup&quot; has cognitive complexity 9 (threshold: 6)</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">cleanup_switch.py:12</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">50%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--info-blue);font-size:10px">INFO</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">complexity</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Function &quot;register&quot; has cognitive complexity 7 (threshold: 6)</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/routers/auth.py:40</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">50%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--info-blue);font-size:10px">INFO</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">complexity</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Function &quot;upload_fragment&quot; has cognitive complexity 7 (threshold: 6)</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/routers/files.py:158</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">50%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--info-blue);font-size:10px">INFO</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">complexity</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Function &quot;_save_lib&quot; has cognitive complexity 7 (threshold: 6)</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/routers/files.py:310</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">50%</td>
+    </tr></tbody>
+    </table>
+  </div>
+  <details style="margin-top:4px">
+        <summary style="cursor:pointer;padding:8px 10px;font-size:12px;color:var(--text-tertiary);list-style:none;display:flex;align-items:center;gap:6px">
+          <span class="chevron">&#9654;</span> 3 more findings
+        </summary>
+        <table style="width:100%;border-collapse:collapse;font-size:13px"><tbody><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--info-blue);font-size:10px">INFO</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">complexity</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Function &quot;generator&quot; has cognitive complexity 7 (threshold: 6)</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/services/event_notifier.py:72</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">50%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--info-blue);font-size:10px">INFO</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">complexity</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Function &quot;list_versions&quot; has cognitive complexity 7 (threshold: 6)</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">app/services/version_manager.py:70</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">50%</td>
+    </tr><tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle)"><span class="sev-badge" style="background:var(--info-blue);font-size:10px">INFO</span></td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:12px;color:var(--text-tertiary)">complexity</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-primary)">Function &quot;test_sse_broadcast&quot; has cognitive complexity 7 (threshold: 6)</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);white-space:nowrap">test_sse_broadcast.py:26</td>
+      <td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:11px;color:var(--text-tertiary)">50%</td>
+    </tr></tbody></table>
+      </details>
+</section>
+
+
+
+<section class="section">
+  <div class="label">AI ANALYSIS <span style="font-size:11px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--text-tertiary);margin-left:8px">4 findings detected &middot; locked</span></div>
+  <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;line-height:1.6">
+    VibeDrift's AI layer detected <strong style="color:var(--text-primary)">4 additional findings</strong> that static analysis can't catch &mdash;
+    semantic duplicates, intent mismatches, and architectural anomalies.
+  </p>
+  <div style="background:var(--bg-surface);border-left:3px solid var(--text-tertiary);border-radius:0;padding:16px 20px;margin-bottom:8px;position:relative;overflow:hidden">
+      <div style="filter:blur(4px);pointer-events:none;user-select:none">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span class="sev-badge" style="background:var(--text-tertiary)">AI</span>
+          <span style="font-size:14px;font-weight:500;color:var(--text-primary)">AI-detected finding</span>
+        </div>
+        <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;margin:0">2 security issues found (2 critical) — run `vibedrift --deep...</p>
+      </div>
+      <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(18,18,20,0.6)">
+        <span style="font-size:12px;color:var(--text-tertiary);letter-spacing:1px;text-transform:uppercase">&#128274; Locked</span>
+      </div>
+    </div><div style="background:var(--bg-surface);border-left:3px solid var(--text-tertiary);border-radius:0;padding:16px 20px;margin-bottom:8px;position:relative;overflow:hidden">
+      <div style="filter:blur(4px);pointer-events:none;user-select:none">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span class="sev-badge" style="background:var(--text-tertiary)">AI</span>
+          <span style="font-size:14px;font-weight:500;color:var(--text-primary)">AI-detected finding</span>
+        </div>
+        <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;margin:0">13 complexity concerns detected — run `vibedrift --deep` for...</p>
+      </div>
+      <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(18,18,20,0.6)">
+        <span style="font-size:12px;color:var(--text-tertiary);letter-spacing:1px;text-transform:uppercase">&#128274; Locked</span>
+      </div>
+    </div><div style="background:var(--bg-surface);border-left:3px solid var(--text-tertiary);border-radius:0;padding:16px 20px;margin-bottom:8px;position:relative;overflow:hidden">
+      <div style="filter:blur(4px);pointer-events:none;user-select:none">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span class="sev-badge" style="background:var(--text-tertiary)">AI</span>
+          <span style="font-size:14px;font-weight:500;color:var(--text-primary)">AI-detected finding</span>
+        </div>
+        <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;margin:0">Potential dead code detected — run `vibedrift --deep` for AI...</p>
+      </div>
+      <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(18,18,20,0.6)">
+        <span style="font-size:12px;color:var(--text-tertiary);letter-spacing:1px;text-transform:uppercase">&#128274; Locked</span>
+      </div>
+    </div><div style="background:var(--bg-surface);border-left:3px solid var(--text-tertiary);border-radius:0;padding:16px 20px;margin-bottom:8px;position:relative;overflow:hidden">
+      <div style="filter:blur(4px);pointer-events:none;user-select:none">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span class="sev-badge" style="background:var(--text-tertiary)">AI</span>
+          <span style="font-size:14px;font-weight:500;color:var(--text-primary)">AI-detected finding</span>
+        </div>
+        <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;margin:0">Sign in first with `vibedrift login` — it's free....</p>
+      </div>
+      <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(18,18,20,0.6)">
+        <span style="font-size:12px;color:var(--text-tertiary);letter-spacing:1px;text-transform:uppercase">&#128274; Locked</span>
+      </div>
+    </div>
+  <div style="margin-top:16px;text-align:center;padding:20px;background:var(--bg-surface);border:1px dashed var(--border)">
+    <div style="font-size:14px;font-weight:600;color:var(--text-primary);margin-bottom:6px">Unlock AI Analysis</div>
+    <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">Run <code style="color:var(--accent-yellow);background:var(--bg-code);padding:2px 6px">vibedrift . --deep</code> to reveal these findings. 3 free deep scans/month.</div>
+    <div style="font-size:12px;color:var(--text-tertiary)">Not signed in? Run <code style="color:var(--accent-yellow)">vibedrift login</code> first &mdash; no card required.</div>
+  </div>
+</section>
+
+<footer style="border-top:1px solid var(--border);padding-top:28px;margin-top:48px;text-align:center;color:var(--text-tertiary);font-size:13px">
+  <div style="display:flex;gap:8px;justify-content:center;margin-bottom:20px;flex-wrap:wrap">
+    <button onclick="exportCSV()" class="export-btn">Export CSV</button>
+    <button onclick="exportDOCX()" class="export-btn">Export DOCX</button>
+    <button onclick="window.print()" class="export-btn">Export PDF</button>
+  </div>
+  <p>Generated by <span style="color:var(--text-primary);font-weight:600">VibeDrift v0.5.18</span></p>
+  <p style="margin:4px 0">30 files &middot; 2,713 lines &middot; 0.3s</p>
+  <p style="margin:4px 0;font-size:12px">No data sent externally.</p>
+  <p style="margin-top:10px">Fix the top issues and re-scan: <code class="mono" style="background:var(--bg-code);padding:2px 6px;border-radius:0;color:var(--text-primary)">vibedrift .</code> <span data-copy="vibedrift ." style="cursor:pointer;font-size:11px;color:var(--text-tertiary)">[copy]</span></p>
+  <div style="margin-top:16px;padding:14px 18px;background:var(--bg-surface);border-radius:0;border-left:3px solid var(--border);text-align:left;font-size:13px;color:var(--text-secondary);max-width:520px;margin-left:auto;margin-right:auto">
+    Want AI-powered deep analysis? Sign in once with <code class="mono" style="color:var(--text-primary);background:var(--bg-code);padding:2px 6px;border-radius:0">vibedrift login</code> then run:<br>
+    <code class="mono" style="color:var(--text-primary);background:var(--bg-code);padding:2px 6px;border-radius:0;margin-top:4px;display:inline-block">vibedrift . --deep</code>
+    <span data-copy="vibedrift . --deep" style="cursor:pointer;margin-left:6px;font-size:11px;color:var(--text-tertiary)">[copy]</span>
+  </div>
+  <div style="margin-top:16px;padding:12px 18px;background:var(--bg-surface);border-radius:0;display:inline-block;text-align:left">
+    <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:6px">Add to your README:</div>
+    <code class="mono" style="font-size:11px;color:var(--text-secondary)">[![VibeDrift Score](https://img.shields.io/badge/VibeDrift-80.1%2F100-brightgreen)](https://vibedrift.ai)</code>
+    <span data-copy="[![VibeDrift Score](https://img.shields.io/badge/VibeDrift-80.1%2F100-brightgreen)](https://vibedrift.ai)" style="cursor:pointer;margin-left:8px;font-size:11px;color:var(--text-tertiary)">[copy]</span>
+  </div>
+  <p style="margin-top:16px;font-size:11px;color:var(--border)">vibedrift.ai &middot; Built by the creator of <a href="https://thevibelang.org" style="color:var(--text-tertiary);text-decoration:none">VibeLang</a></p>
+</footer>
+
+</div>
+
+<script>
+window.__VIBEDRIFT_DATA = {"version":"0.5.18","project":"vaultsync_server","score":80.1,"maxScore":100,"fileCount":30,"totalLines":2713,"scanTimeMs":257,"driftFindings":[{"severity":"warning","category":"architectural_consistency","finding":"./: 1 file(s) use inline HTTP client calls while 3 use raw SQL queries","dominant":"raw SQL queries","consistency":75,"devFiles":"verify_sync.py","recommendation":"In ./, 3 of 4 files use raw SQL queries. Migrate deviating files for consistency."},{"severity":"warning","category":"logging_consistency","finding":"1 file(s) use Python logging module while 9 use structured logger (winston/pino/bunyan/log4js/tracing)","dominant":"structured logger (winston/pino/bunyan/log4js/tracing)","consistency":90,"devFiles":"app/services/reassembly_service.py","recommendation":"Standardize on structured logger (winston/pino/bunyan/log4js/tracing). Mixed logging forces log aggregation to handle multiple output shapes."}],"findings":[{"severity":"warning","analyzer":"naming","message":"5 files use camelCase while majority uses snake_case (H=0.44)","file":"app/routers/auth.py","line":"","confidence":56},{"severity":"warning","analyzer":"dead-code","message":"8 Python functions appear unused: update_file_sync, revoke_all_user_refresh_tokens, auth_me, list_files, download_file...","file":"app/crud.py","line":108,"confidence":50},{"severity":"warning","analyzer":"dead-code","message":"4 potentially unreachable code blocks after return/throw","file":"app/main.py","line":59,"confidence":65},{"severity":"warning","analyzer":"dependencies","message":"5 potentially unused Python packages: python-multipart, bcrypt, python-jose, psycopg2-binary, asyncpg","file":"requirements.txt","line":"","confidence":65},{"severity":"warning","analyzer":"config-drift","message":"Env var DB_HOST used in code but missing from .env.example","file":"app/config.py","line":16,"confidence":85},{"severity":"warning","analyzer":"config-drift","message":"Env var DB_NAME used in code but missing from .env.example","file":"app/config.py","line":17,"confidence":85},{"severity":"warning","analyzer":"config-drift","message":"Env var DB_USER used in code but missing from .env.example","file":"app/config.py","line":18,"confidence":85},{"severity":"warning","analyzer":"config-drift","message":"Env var DB_PASS used in code but missing from .env.example","file":"app/config.py","line":19,"confidence":85},{"severity":"warning","analyzer":"config-drift","message":"Env var REDIS_HOST used in code but missing from .env.example","file":"app/config.py","line":22,"confidence":85},{"severity":"warning","analyzer":"config-drift","message":"Env var REDIS_PORT used in code but missing from .env.example","file":"app/config.py","line":23,"confidence":85},{"severity":"warning","analyzer":"config-drift","message":"Env var VAULTSYNC_CORS_ORIGINS used in code but missing from .env.example","file":"app/config.py","line":42,"confidence":85},{"severity":"warning","analyzer":"config-drift","message":"Env var ROMM_URL used in code but missing from .env.example","file":"app/config.py","line":45,"confidence":85},{"severity":"warning","analyzer":"config-drift","message":"Env var ROMM_API_KEY used in code but missing from .env.example","file":"app/config.py","line":46,"confidence":85},{"severity":"warning","analyzer":"config-drift","message":"9 env vars used in code but missing from .env.example","file":"","line":"","confidence":85},{"severity":"info","analyzer":"config-drift","message":"3 env var(s) declared in .env.example but never referenced in code: POSTGRES_PASSWORD, POSTGRES_DB, POSTGRES_USER","file":"","line":"","confidence":70},{"severity":"error","analyzer":"security","message":"Potential hardcoded password in test_refresh_tokens.py:8","file":"test_refresh_tokens.py","line":8,"confidence":75},{"severity":"error","analyzer":"security","message":"Potential hardcoded password in test_sse_broadcast.py:28","file":"test_sse_broadcast.py","line":28,"confidence":75},{"severity":"error","analyzer":"intent-clarity","message":"6 functions exceed 50 lines","file":"app/database.py","line":46,"confidence":85},{"severity":"warning","analyzer":"intent-clarity","message":"53 exported functions lack documentation (~1.8 per file)","file":"app/config.py","line":31,"confidence":55},{"severity":"info","analyzer":"intent-clarity","message":"3 function(s) where the leading verb doesn't match the body's control structure","file":"app/database.py","line":38,"confidence":60},{"severity":"warning","analyzer":"complexity","message":"Function \"run_verify\" has cognitive complexity 13 (threshold: 10)","file":"verify_sync.py","line":61,"confidence":75},{"severity":"warning","analyzer":"complexity","message":"Function \"check_files\" has cognitive complexity 12 (threshold: 10)","file":"check_db.py","line":11,"confidence":75},{"severity":"info","analyzer":"complexity","message":"Function \"login\" has cognitive complexity 10 (threshold: 6)","file":"app/routers/auth.py","line":74,"confidence":50},{"severity":"info","analyzer":"complexity","message":"Function \"_local_match\" has cognitive complexity 10 (threshold: 6)","file":"app/routers/files.py","line":401,"confidence":50},{"severity":"info","analyzer":"complexity","message":"Function \"migrate_retroarch_saves\" has cognitive complexity 10 (threshold: 6)","file":"clean_retroarch.py","line":40,"confidence":50},{"severity":"info","analyzer":"complexity","message":"Function \"_load_json\" has cognitive complexity 9 (threshold: 6)","file":"app/services/title_db_service.py","line":50,"confidence":50},{"severity":"info","analyzer":"complexity","message":"Function \"cleanup\" has cognitive complexity 9 (threshold: 6)","file":"cleanup_switch.py","line":12,"confidence":50},{"severity":"info","analyzer":"complexity","message":"Function \"register\" has cognitive complexity 7 (threshold: 6)","file":"app/routers/auth.py","line":40,"confidence":50},{"severity":"info","analyzer":"complexity","message":"Function \"upload_fragment\" has cognitive complexity 7 (threshold: 6)","file":"app/routers/files.py","line":158,"confidence":50},{"severity":"info","analyzer":"complexity","message":"Function \"_save_lib\" has cognitive complexity 7 (threshold: 6)","file":"app/routers/files.py","line":310,"confidence":50},{"severity":"info","analyzer":"complexity","message":"Function \"generator\" has cognitive complexity 7 (threshold: 6)","file":"app/services/event_notifier.py","line":72,"confidence":50},{"severity":"info","analyzer":"complexity","message":"Function \"list_versions\" has cognitive complexity 7 (threshold: 6)","file":"app/services/version_manager.py","line":70,"confidence":50},{"severity":"info","analyzer":"complexity","message":"Function \"test_sse_broadcast\" has cognitive complexity 7 (threshold: 6)","file":"test_sse_broadcast.py","line":26,"confidence":50},{"severity":"warning","analyzer":"drift-architectural_consistency","message":"DRIFT: ./: 1 file(s) use inline HTTP client calls while 3 use raw SQL queries","file":"verify_sync.py","line":64,"confidence":85},{"severity":"warning","analyzer":"drift-logging-consistency","message":"DRIFT: 1 file(s) use Python logging module while 9 use structured logger (winston/pino/bunyan/log4js/tracing)","file":"app/services/reassembly_service.py","line":7,"confidence":75},{"severity":"warning","analyzer":"codedna-pattern","message":"Pattern drift: app/routers/files.py uses raw_sql while 3/5 files use orm","file":"app/routers/files.py","line":291,"confidence":51},{"severity":"info","analyzer":"codedna-pattern","message":"Mixed patterns in app/routers/files.py: raw_sql: 51%, orm: 49% — file mixes architectural approaches internally","file":"app/routers/files.py","line":"","confidence":60},{"severity":"warning","analyzer":"codedna-pattern","message":"Pattern drift: test_api_endpoints.py uses http_client while 3/5 files use orm","file":"test_api_endpoints.py","line":8,"confidence":100}],"fileScores":[{"file":"app/config.py","score":18,"findings":10},{"file":"cleanup_switch.py","score":30,"findings":7},{"file":"app/routers/files.py","score":49,"findings":7},{"file":"test_db_schema.py","score":49,"findings":4},{"file":"wipe_all.py","score":49,"findings":4},{"file":"verify_sync.py","score":50,"findings":3},{"file":"test_refresh_tokens.py","score":51,"findings":2},{"file":"app/routers/auth.py","score":65,"findings":5},{"file":"app/database.py","score":67,"findings":2},{"file":"clean_retroarch.py","score":68,"findings":2},{"file":"test_sse_broadcast.py","score":71,"findings":2},{"file":"app/crud.py","score":80,"findings":2},{"file":"test_api_endpoints.py","score":81,"findings":1},{"file":"check_db.py","score":82,"findings":2},{"file":"app/services/event_notifier.py","score":86,"findings":2},{"file":"app/services/reassembly_service.py","score":86,"findings":1},{"file":"app/services/title_db_service.py","score":86,"findings":2},{"file":"app/main.py","score":87,"findings":1},{"file":"app/routers/events.py","score":87,"findings":1},{"file":"test_logic.py","score":89,"findings":1},{"file":"app/routers/recovery.py","score":90,"findings":1},{"file":"app/utils.py","score":96,"findings":1},{"file":"app/services/version_manager.py","score":97,"findings":1},{"file":"app/dependencies.py","score":100,"findings":0},{"file":"app/limiter.py","score":100,"findings":0},{"file":"app/models.py","score":100,"findings":0},{"file":"app/routers/__init__.py","score":100,"findings":0},{"file":"app/services/romm_client.py","score":100,"findings":0},{"file":"test_reassembly.py","score":100,"findings":0},{"file":"test_title_db.py","score":100,"findings":0}],"codeDna":{"sequences":[],"deviations":[{"file":"app/routers/files.py","verdict":"uncertain","pattern":"raw_sql vs orm"},{"file":"test_api_endpoints.py","verdict":"likely_justified","pattern":"http_client vs orm"}]},"deepInsights":[]};
+</script>
+
+<script>
+// Sticky header
+const hdr = document.getElementById('report-header');
+const sticky = document.getElementById('sticky-header');
+if (hdr && sticky) {
+  new IntersectionObserver(([e]) => {
+    sticky.classList.toggle('visible', !e.isIntersecting);
+  }, { threshold: 0 }).observe(hdr);
+}
+
+// Collapsible
+document.querySelectorAll('[data-collapse]').forEach(t => {
+  t.addEventListener('click', () => {
+    const el = document.getElementById(t.dataset.collapse);
+    if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+  });
+});
+
+// Scroll-to
+document.querySelectorAll('[data-scroll-to]').forEach(l => {
+  l.addEventListener('click', e => {
+    e.preventDefault();
+    const t = document.getElementById(l.dataset.scrollTo);
+    if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'center' }); t.style.background = 'rgba(0,212,255,0.06)'; setTimeout(() => t.style.background = '', 2000); }
+  });
+});
+
+// Copy
+document.querySelectorAll('[data-copy]').forEach(b => {
+  b.addEventListener('click', () => {
+    navigator.clipboard.writeText(b.dataset.copy).then(() => { const o = b.textContent; b.textContent = 'Copied!'; setTimeout(() => b.textContent = o, 1500); });
+  });
+});
+
+// Tooltips
+document.querySelectorAll('[data-tooltip]').forEach(el => {
+  el.addEventListener('mouseenter', e => {
+    const t = document.createElement('div');
+    t.textContent = el.dataset.tooltip;
+    t.style.cssText = 'position:fixed;background:var(--bg-surface);color:var(--text-primary);padding:6px 10px;border-radius:0;font-size:12px;border:1px solid var(--border);z-index:200;pointer-events:none;max-width:250px';
+    document.body.appendChild(t);
+    const r = el.getBoundingClientRect();
+    t.style.left = r.left + 'px'; t.style.top = (r.bottom + 6) + 'px';
+    el._tip = t;
+  });
+  el.addEventListener('mouseleave', () => { if (el._tip) { el._tip.remove(); el._tip = null; } });
+});
+
+// Table sort
+document.querySelectorAll('th[data-sort]').forEach(th => {
+  th.addEventListener('click', () => {
+    const tb = th.closest('table').querySelector('tbody');
+    const rows = Array.from(tb.querySelectorAll('tr'));
+    const col = th.cellIndex;
+    const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
+    th.dataset.dir = dir;
+    rows.sort((a, b) => {
+      const av = a.cells[col]?.textContent?.trim() ?? '';
+      const bv = b.cells[col]?.textContent?.trim() ?? '';
+      return dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+    });
+    rows.forEach(r => tb.appendChild(r));
+  });
+});
+
+// ──── Export: CSV ────
+function exportCSV() {
+  const d = window.__VIBEDRIFT_DATA;
+  if (!d) { alert('Report data not available'); return; }
+  const esc = v => { const s = String(v); return s.includes(',') || s.includes('"') || s.includes('\n') ? '"'+s.replace(/"/g,'""')+'"' : s; };
+  const row = (...c) => c.map(esc).join(',');
+  const lines = [];
+  lines.push('VIBEDRIFT REPORT');
+  lines.push(row('Project', d.project));
+  lines.push(row('Score', d.score + '/' + d.maxScore));
+  lines.push(row('Files', d.fileCount));
+  lines.push(row('Lines', d.totalLines));
+  lines.push('');
+  lines.push('DRIFT FINDINGS');
+  lines.push(row('Severity','Category','Finding','Dominant Pattern','Consistency %','Deviating Files','Recommendation'));
+  for (const f of d.driftFindings || []) lines.push(row(f.severity, f.category, f.finding, f.dominant, f.consistency, f.devFiles, f.recommendation));
+  lines.push('');
+  lines.push('ALL FINDINGS');
+  lines.push(row('Severity','Analyzer','Message','File','Line','Confidence'));
+  for (const f of d.findings || []) lines.push(row(f.severity, f.analyzer, f.message, f.file, f.line, f.confidence));
+  lines.push('');
+  lines.push('FILE SCORES');
+  lines.push(row('File','Score','Findings'));
+  for (const f of d.fileScores || []) lines.push(row(f.file, f.score, f.findings));
+
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = d.project + '-vibedrift.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ──── Export: DOCX (Word-compatible HTML) ────
+function buildDocxFindingsHtml(d) {
+  let html = '';
+  html += '<h1>Drift Findings</h1>';
+  for (const f of d.driftFindings || []) {
+    const sev = f.severity === 'error' ? 'critical' : f.severity;
+    html += '<h2><span class="sev-' + sev + '">[' + (sev === 'critical' ? 'CRITICAL' : sev.toUpperCase()) + ']</span> ' + esc2(f.finding) + '</h2>';
+    html += '<p>Category: ' + esc2(f.category) + ' | Consistency: ' + f.consistency + '%</p>';
+    html += '<div class="intent"><strong>INTENT (Dominant):</strong> ' + esc2(f.dominant) + '</div>';
+    html += '<div class="drift"><strong>DEVIATING:</strong> ' + esc2(f.devFiles) + '</div>';
+    if (f.recommendation) html += '<div class="rec"><strong>Fix:</strong> ' + esc2(f.recommendation) + '</div>';
+  }
+  html += '<div class="page-break"></div><h1>All Findings</h1>';
+  html += '<table><tr><th>Severity</th><th>Analyzer</th><th>Finding</th><th>File</th><th>Line</th></tr>';
+  for (const f of d.findings || []) {
+    html += '<tr><td class="sev-' + (f.severity === 'error' ? 'critical' : f.severity) + '">' + f.severity.toUpperCase() + '</td>';
+    html += '<td>' + esc2(f.analyzer) + '</td><td>' + esc2(f.message) + '</td>';
+    html += '<td><code>' + esc2(f.file) + '</code></td><td>' + f.line + '</td></tr>';
+  }
+  html += '</table>';
+  return html;
+}
+
+function buildDocxScoresHtml(d) {
+  let html = '';
+  html += '<div class="page-break"></div><h1>File Scores</h1>';
+  html += '<table><tr><th>File</th><th>Score</th><th>Findings</th></tr>';
+  for (const f of d.fileScores || []) {
+    html += '<tr><td><code>' + esc2(f.file) + '</code></td><td>' + f.score + '/100</td><td>' + f.findings + '</td></tr>';
+  }
+  html += '</table>';
+  if (d.codeDna) {
+    html += '<div class="page-break"></div><h1>Code DNA Analysis</h1>';
+    if (d.codeDna.sequences && d.codeDna.sequences.length > 0) {
+      html += '<h2>Operation Sequence Matches</h2><table><tr><th>Function A</th><th>Function B</th><th>Similarity</th></tr>';
+      for (const s of d.codeDna.sequences) html += '<tr><td>' + esc2(s.a) + '</td><td>' + esc2(s.b) + '</td><td>' + s.pct + '%</td></tr>';
+      html += '</table>';
+    }
+    if (d.codeDna.deviations && d.codeDna.deviations.length > 0) {
+      html += '<h2>Deviation Analysis</h2><table><tr><th>File</th><th>Verdict</th><th>Pattern</th></tr>';
+      for (const dv of d.codeDna.deviations) html += '<tr><td>' + esc2(dv.file) + '</td><td>' + dv.verdict + '</td><td>' + esc2(dv.pattern) + '</td></tr>';
+      html += '</table>';
+    }
+  }
+  if (d.deepInsights && d.deepInsights.length > 0) {
+    html += '<div class="page-break"></div><h1>Deep Analysis Insights (AI-Powered)</h1>';
+    for (const ins of d.deepInsights) {
+      html += '<h3>[' + ins.severity.toUpperCase() + '] ' + esc2(ins.title) + '</h3>';
+      html += '<p>' + esc2(ins.description) + '</p>';
+      if (ins.recommendation) html += '<div class="rec"><strong>Fix:</strong> ' + esc2(ins.recommendation) + '</div>';
+    }
+  }
+  return html;
+}
+
+function exportDOCX() {
+  const d = window.__VIBEDRIFT_DATA;
+  if (!d) { alert('Report data not available'); return; }
+
+  let html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><style>';
+  html += 'body{font-family:Calibri,sans-serif;font-size:11pt;color:#222;margin:40px}';
+  html += 'h1{font-size:20pt;color:#0B0F15;border-bottom:2px solid #00D4FF;padding-bottom:8px;margin-top:28px}';
+  html += 'h2{font-size:14pt;color:#333;margin-top:20px}';
+  html += 'h3{font-size:12pt;color:#555;margin-top:14px}';
+  html += 'table{border-collapse:collapse;width:100%;margin:10px 0}';
+  html += 'th,td{border:1px solid #ddd;padding:6px 10px;text-align:left;font-size:10pt}';
+  html += 'th{background:#f0f4f8;font-weight:600}';
+  html += '.sev-critical{color:#dc2626;font-weight:700} .sev-warning{color:#d97706;font-weight:700} .sev-info{color:#2563eb}';
+  html += '.intent{background:#ecfdf5;border-left:3px solid #10b981;padding:8px 12px;margin:6px 0}';
+  html += '.drift{background:#fff7ed;border-left:3px solid #f97316;padding:8px 12px;margin:6px 0}';
+  html += '.rec{background:#f0f9ff;border-left:3px solid #0ea5e9;padding:8px 12px;margin:6px 0}';
+  html += 'code{font-family:Consolas,monospace;font-size:9pt;background:#f5f5f5;padding:1px 4px}';
+  html += '.page-break{page-break-before:always}';
+  html += '</style></head><body>';
+
+  html += '<div style="text-align:center;margin-bottom:30px">';
+  html += '<h1 style="border:none;font-size:28pt;color:#00D4FF">VIBEDRIFT REPORT</h1>';
+  html += '<p style="font-size:16pt;color:#333">' + esc2(d.project) + '</p>';
+  html += '<p>' + d.fileCount + ' files &middot; ' + d.totalLines.toLocaleString() + ' LOC &middot; Score: <strong>' + d.score + '/' + d.maxScore + '</strong></p>';
+  html += '</div>';
+
+  html += buildDocxFindingsHtml(d);
+  html += buildDocxScoresHtml(d);
+
+  html += '<hr><p style="color:#999;font-size:9pt">Generated by VibeDrift v' + d.version + ' | ' + d.fileCount + ' files | No data sent externally</p>';
+  html += '</body></html>';
+
+  const blob = new Blob([html], { type: 'application/vnd.ms-word' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = d.project + '-vibedrift.doc';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function esc2(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+</script>
+
+</body>
+</html>

@@ -1,5 +1,6 @@
 import os
 import socket
+import tempfile
 import httpx
 import logging
 from typing import Optional, Dict, List, Tuple
@@ -13,6 +14,22 @@ from ..config import (
 from .. import crud
 
 logger = logging.getLogger("VaultSync")
+
+
+class RommError(Exception):
+    """Base class for RomM client errors surfaced to callers."""
+
+
+class RommNotFound(RommError):
+    """RomM returned 404 for a rom_id, save_id, or listed no saves for the rom."""
+
+
+class RommUpstreamError(RommError):
+    """RomM returned a non-404 error status (5xx or unexpected 4xx)."""
+
+
+class RommUnavailable(RommError):
+    """RomM was unreachable (connect error, timeout, or client not configured)."""
 
 
 def _version_at_least(current: Optional[str], minimum: str) -> bool:
@@ -338,6 +355,102 @@ class RomMClient:
         except Exception as e:
             logger.error(f"RomM download failed: {str(e)}")
         return None
+
+    async def pull_save_from_romm(
+        self,
+        conn,
+        romm_id: int,
+        user_id: int,
+    ) -> Tuple[str, Dict]:
+        """Downloads the latest save for a RomM rom_id to a temp file.
+
+        Returns `(tmp_path, metadata)`; caller owns `tmp_path` and must delete it.
+        Raises `RommNotFound`, `RommUpstreamError`, or `RommUnavailable` on failure.
+        """
+        if not self.api_key or not self.base_url:
+            raise RommUnavailable("RomM client is not configured")
+
+        device_id = await self.ensure_device_registered(conn, user_id)
+
+        list_params: Dict[str, object] = {"rom_id": romm_id}
+        if device_id and self.supports_device_api():
+            list_params["device_id"] = device_id
+
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"{self.base_url}/api/saves",
+                    params=list_params,
+                    headers=self.headers,
+                    timeout=30.0,
+                )
+                if resp.status_code == 404:
+                    raise RommNotFound(f"RomM rom_id={romm_id} not found")
+                if resp.status_code != 200:
+                    raise RommUpstreamError(
+                        f"RomM returned {resp.status_code} listing saves for rom_id={romm_id}"
+                    )
+
+                saves = resp.json() or []
+                if not saves:
+                    raise RommNotFound(f"No saves available for RomM rom_id={romm_id}")
+
+                latest = sorted(saves, key=lambda x: x.get("updated_at", ""), reverse=True)[0]
+                save_id = latest["id"]
+                file_name = (
+                    latest.get("file_name")
+                    or latest.get("filename")
+                    or latest.get("name")
+                    or "save.bin"
+                )
+
+                dl_params: Dict[str, object] = {}
+                if device_id and self.supports_device_api():
+                    dl_params["device_id"] = device_id
+
+                dl_resp = await client.get(
+                    f"{self.base_url}/api/saves/{save_id}/content/{file_name}",
+                    headers=self.headers,
+                    params=dl_params or None,
+                    timeout=120.0,
+                    follow_redirects=True,
+                )
+                if dl_resp.status_code == 404:
+                    dl_resp = await client.get(
+                        f"{self.base_url}/api/saves/{save_id}/content",
+                        headers=self.headers,
+                        params=dl_params or None,
+                        timeout=120.0,
+                        follow_redirects=True,
+                    )
+                if dl_resp.status_code == 404:
+                    raise RommNotFound(f"RomM save_id={save_id} content not found")
+                if dl_resp.status_code != 200:
+                    raise RommUpstreamError(
+                        f"RomM returned {dl_resp.status_code} downloading save_id={save_id}"
+                    )
+
+                fd, tmp_path = tempfile.mkstemp(prefix="romm_pull_", suffix=f"_{file_name}")
+                try:
+                    with os.fdopen(fd, "wb") as fout:
+                        fout.write(dl_resp.content)
+                except Exception:
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+                    raise
+
+                return tmp_path, {
+                    "save_id": save_id,
+                    "romm_id": romm_id,
+                    "file_name": file_name,
+                    "updated_at": latest.get("updated_at"),
+                    "emulator": latest.get("emulator"),
+                    "size": len(dl_resp.content),
+                }
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            raise RommUnavailable(f"Could not reach RomM at {self.base_url}: {e}") from e
 
 
 # Global default instance

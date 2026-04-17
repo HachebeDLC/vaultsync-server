@@ -32,7 +32,7 @@ from app.database import get_db, init_db
 from app.services.reassembly_service import reassembly_service
 from app.services.romm_client import RomMClient
 from app.services.title_db_service import title_db
-from app.config import STORAGE_DIR
+from app.config import STORAGE_DIR, romm_emulator_for
 from app import crud
 
 # Setup logging
@@ -60,7 +60,7 @@ class SaveHandler:
     def get_zip_name(self, title_id: str, fuzzy_name: str) -> str:
         return f"{title_id}_save.zip"
     def get_emulator(self, platform: str) -> str:
-        return platform
+        return romm_emulator_for(platform)
 
 class RetroArchHandler(SaveHandler):
     def can_handle(self, platform, path):

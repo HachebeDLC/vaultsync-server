@@ -48,4 +48,8 @@ class RomMSyncRequest(BaseModel):
 
 class RomMPullRequest(BaseModel):
     rom_id: int
-    target_path: str
+    # `target_path` is accepted for backward compatibility but unused server-side:
+    # the pull endpoint streams plaintext bytes back to the client so the client
+    # can encrypt locally and upload via the normal /upload flow. The client picks
+    # the destination path itself.
+    target_path: Optional[str] = None

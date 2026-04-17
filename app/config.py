@@ -47,3 +47,17 @@ ROMM_API_KEY = os.environ.get("ROMM_API_KEY", "")
 VAULTSYNC_VERSION = "1.0.0"
 ROMM_DEVICE_NAME = "vaultsync"
 ROMM_DEVICE_API_MIN_VERSION = "4.7.0"
+
+ROMM_EMULATOR_MAP = {
+    'switch': 'eden', 'eden': 'eden',
+    'gc': 'dolphin', 'dolphin': 'dolphin', 'wii': 'dolphin',
+    'psp': 'ppsspp', 'ppsspp': 'ppsspp',
+    'ps2': 'pcsx2', 'pcsx2': 'pcsx2', 'aethersx2': 'pcsx2',
+    '3ds': 'citra', 'citra': 'citra', 'azahar': 'citra',
+    'retroarch': 'retroarch',
+}
+
+def romm_emulator_for(platform: str) -> str:
+    if not platform:
+        return 'retroarch'
+    return ROMM_EMULATOR_MAP.get(platform.lower(), 'retroarch')
