@@ -17,7 +17,12 @@ def load_env(env_path):
                 if line.strip() and not line.startswith('#'):
                     try:
                         key, value = line.strip().split('=', 1)
-                        os.environ[key] = value.strip('"').strip("'")
+                        value = value.strip('"').strip("'")
+                        # Don't let an empty .env value clobber an env-var that
+                        # was explicitly set on the command line.
+                        if key in os.environ and not value:
+                            continue
+                        os.environ[key] = value
                     except ValueError:
                         continue
 
@@ -75,13 +80,52 @@ class RetroArchHandler(SaveHandler):
         return "retroarch"
 
 class SwitchHandler(SaveHandler):
+    # Title IDs that bypass user profiles on real hardware — these live under
+    # `0000000000000000/00000000000000000000000000000000/<titleId>` rather than
+    # under the active profile. Mirrors Argosy's DEVICE_SAVE_TITLE_IDS.
+    DEVICE_SAVE_TITLE_IDS = {
+        "01006F8002326000",  # Animal Crossing: New Horizons
+        "0100D2F00D5C0000",  # Nintendo Switch Sports
+        "01000320000CC000",  # 1-2-Switch
+        "01002FF008C24000",  # Ring Fit Adventure
+        "0100C4B0034B2000",  # Nintendo Labo Toy-Con 01: Variety Kit
+        "01009AB0034E0000",  # Nintendo Labo Toy-Con 02: Robot Kit
+        "01001E9003502000",  # Nintendo Labo Toy-Con 03: Vehicle Kit
+        "0100165003504000",  # Nintendo Labo Toy-Con 04: VR Kit
+        "0100C1800A9B6000",  # Go Vacation
+    }
+    _TITLE_ID_RE = re.compile(r"^01[0-9A-Fa-f]{14}$")
+
+    @classmethod
+    def is_valid_title_id(cls, candidate: str) -> bool:
+        return bool(candidate and cls._TITLE_ID_RE.match(candidate))
+
+    @classmethod
+    def is_device_save(cls, title_id: str) -> bool:
+        return bool(title_id) and title_id.upper() in cls.DEVICE_SAVE_TITLE_IDS
+
     def can_handle(self, platform, path):
         return platform in ("switch", "eden")
+
     def extract_meta(self, platform, path):
         parts = path.split("/")
-        title_id = parts[1] if len(parts) >= 3 else parts[-1]
-        inner = "/".join(parts[2:]) if len(parts) >= 3 else parts[-1]
-        return (f"switch:{title_id}", title_id, None, inner)
+        # Scan the path for the first segment that matches the Switch title-ID
+        # shape (16 hex, starts with "01"). Blindly indexing parts[1] as Argosy's
+        # old parser did produces junk title_ids for anything rooted under
+        # `nand/user/save/...`.
+        title_id = next((p for p in parts if self.is_valid_title_id(p)), None)
+        if title_id:
+            title_id = title_id.upper()
+            idx = parts.index(title_id) if title_id in parts else (
+                next(i for i, p in enumerate(parts) if p.upper() == title_id)
+            )
+            inner = "/".join(parts[idx + 1:]) or parts[-1]
+            return (f"switch:{title_id}", title_id, None, inner)
+        # No valid title ID found — fall back to the filename so the group isn't
+        # silently merged with an unrelated save under `switch:nand`.
+        fname = parts[-1]
+        return (f"switch:?{fname}", None, clean_game_name(fname), fname)
+
     def get_emulator(self, platform):
         return "eden"
 
