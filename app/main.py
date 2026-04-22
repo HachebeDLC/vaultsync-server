@@ -17,7 +17,7 @@ from .services.auto_sync_romm import auto_sync_loop
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("VaultSync")
 
-app = FastAPI(title="VaultSync Server", version="1.5.0")
+app = FastAPI(title="VaultSync Server", version="1.5.1")
 
 # --- Rate Limiting ---
 app.state.limiter = limiter
@@ -60,7 +60,7 @@ def shutdown_db_pool():
 def health_check():
     return {
         "status": "online", 
-        "version": "VaultSync-v1.5.0-Modular",
+        "version": "VaultSync-v1.5.1-Modular",
         "database": "connected" if get_pool() else "disconnected"
     }
 
