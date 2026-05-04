@@ -431,9 +431,9 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
             
             # 2. Sequential execution block for RomM operations
             async with romm_push_lock:
-                # A. Safety Bypass for PS2 Memory Card Blobs
-                if body.path.lower().endswith('.ps2'):
-                    logger.info(f"Skipping RomM push for PS2 Memory Card Blob ({body.path}). Cannot link multi-game blobs to single RomM entries.")
+                # A. Safety Bypass for PS2 Memory Card Blobs and System Files
+                if body.path.lower().endswith('.ps2') or '_pcsx2_' in body.path:
+                    logger.info(f"Skipping RomM push for PS2 system file ({body.path}). Cannot link system files or blobs to single RomM entries.")
                     return
 
                 # B. Local RomM Match
@@ -474,8 +474,25 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
                     elif len(parts) == 2 and not filename.lower().endswith('.srm'):
                         target_id = filename.split('.')[0].upper()
                 elif platform in ('ps2', 'pcsx2', 'aethersx2'):
-                    if filename.lower().endswith('.ps2'):
+                    if filename.lower().endswith(('.ps2', '.psu')):
                         target_name = os.path.splitext(filename)[0]
+                    elif '.ps2/' in body.path.lower():
+                        # Folder card file: e.g. ps2/Total.ps2/BASCUS-97399GodOfWar/data0.bin
+                        # Search for game ID in the folder name
+                        for i, part in enumerate(parts):
+                            if part.lower().endswith('.ps2'):
+                                if i + 1 < len(parts):
+                                    game_folder = parts[i+1]
+                                    # Game folder is usually something like BASCUS-97399GodOfWar
+                                    # We want SCUS-97399
+                                    import re
+                                    match = re.search(r'([A-Z]{4}-\d{5})', game_folder.upper())
+                                    if match:
+                                        target_id = match.group(1)
+                                    else:
+                                        # Fallback to the folder name if no GameID pattern found
+                                        target_name = game_folder
+                                break
                 elif platform in ('gba', 'snes', 'n64', 'nds', 'gb', 'gbc', 'nes', 'megadrive', 'genesis', 'ps1', 'psx'):
                     # Typically RetroArch stores saves as game_name.srm or game_name.state
                     if filename.lower().endswith('.srm') or filename.lower().endswith('.state') or filename.lower().endswith('.sav'):
