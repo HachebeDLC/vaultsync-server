@@ -107,6 +107,48 @@ def _is_os_dup(path: str) -> bool:
     return bool(re.search(r'(\(\d+\)|[ _-]copy|[ _-]Copy)$', stem))
 
 
+def _is_bak(path: str) -> bool:
+    # RetroArch rotates the previous save/state to .bak on every write. These
+    # are local-only backups and never belong in cloud storage. Apply across
+    # all namespaces (.bak in psp/, gc/, etc. is just as wrong).
+    return path.lower().endswith('.bak')
+
+
+_RA_RESERVED_SECOND = {'saves', 'states', 'files'}
+_RA_SAVE_EXTS = ('.srm', '.sav', '.save', '.dsv', '.eep', '.fla', '.mcr', '.fds')
+
+
+def _is_ra_core_misnested(path: str) -> bool:
+    """RetroArch/<core>/<file...> where <core> is not saves/states/files and the
+    leaf file has a known save or state extension. Pre-v1.5 dumped these into
+    per-core dirs directly under RetroArch/ instead of saves/<core>/ or
+    states/<core>/."""
+    parts = path.split('/')
+    if len(parts) < 3:
+        return False
+    if parts[0].lower() != 'retroarch':
+        return False
+    if parts[1].lower() in _RA_RESERVED_SECOND:
+        return False
+    fname = parts[-1].lower()
+    if fname.endswith('.bak'):
+        return False  # bak_files owns these
+    is_state = '.state' in fname or fname.endswith('.s00') or bool(re.search(r'\.s\d+$', fname))
+    is_save = fname.endswith(_RA_SAVE_EXTS)
+    return is_state or is_save
+
+
+def _ra_core_misnested_relocator(path: str) -> str:
+    if not _is_ra_core_misnested(path):
+        return path
+    parts = path.split('/')
+    fname = parts[-1].lower()
+    is_state = '.state' in fname or fname.endswith('.s00') or bool(re.search(r'\.s\d+$', fname))
+    bucket = 'states' if is_state else 'saves'
+    # RetroArch / <bucket> / <core> / <...remaining...>
+    return '/'.join([parts[0], bucket] + parts[1:])
+
+
 # ----- Category definitions --------------------------------------------------
 
 class Category:
@@ -134,6 +176,13 @@ def _ra_singular_relocator(path: str) -> str:
 
 
 CATEGORIES: list[Category] = [
+    # Order matters — first match wins per row. Put delete-everywhere rules
+    # (bak_files, syncthing_conflict) BEFORE more-specific relocators so we
+    # never relocate a backup file.
+    Category('bak_files', 'RetroArch .bak rotation files (anywhere)',
+             _is_bak),
+    Category('syncthing_conflict', 'Syncthing .sync-conflict-* artifacts',
+             _is_syncthing_conflict),
     Category('psp_stray', 'PSP/PPSSPP flat files at namespace root (no SAVEDATA anchor)',
              _is_psp_stray),
     Category('wii_nand', 'Wii NAND content blobs (.app/.tmd/.wad)',
@@ -144,10 +193,12 @@ CATEGORIES: list[Category] = [
     Category('retroarch_singular', 'RetroArch/file/ singular (relocate to RetroArch/files/)',
              lambda p: _is_retroarch_singular(p)[0],
              _ra_singular_relocator),
+    Category('ra_core_misnested',
+             'RetroArch/<core>/<save> at wrong nesting (relocate under saves/<core>/ or states/<core>/)',
+             _is_ra_core_misnested,
+             _ra_core_misnested_relocator),
     Category('switch_kitchen_sink', 'Switch entries not under nand/user/save/<16hex>/<32hex>/',
              _is_switch_kitchen_sink),
-    Category('syncthing_conflict', 'Syncthing .sync-conflict-* artifacts',
-             _is_syncthing_conflict),
     Category('os_dup', 'OS duplicates: " (1)", " copy", "- Copy" suffix',
              _is_os_dup),
 ]
@@ -190,6 +241,55 @@ def _find_cross_namespace_dups(cursor, user_id: int | None):
         dup_paths = [p for p, i in zip(paths, ids) if i != keeper_id]
         groups.append((uid, keeper_id, paths[keeper_idx], dup_ids, dup_paths, h, size))
     return groups
+
+
+def _find_ra_root_flat(cursor, user_id: int | None):
+    """
+    Find rows like `RetroArch/<filename>` (exactly 2 segments) for which a
+    canonical copy already exists under `RetroArch/saves/...` or
+    `RetroArch/states/...` with the same filename — and, when both rows have
+    hashes, the same hash. Those root copies are safe to delete because the
+    canonical copy supersedes them.
+    Returns: [(file_id, user_id, root_path, canonical_path, hash_matched), ...]
+    """
+    where = "WHERE path ILIKE 'RetroArch/%%'"
+    params: list = []
+    if user_id is not None:
+        where += " AND user_id = %s"
+        params.append(user_id)
+    cursor.execute(f"SELECT id, user_id, path, hash FROM files {where}", params)
+    rows = cursor.fetchall()
+
+    # Index canonical (saves/ or states/ subtree) entries by (user_id, basename).
+    canonical: dict[tuple[int, str], list[tuple[int, str, str]]] = {}
+    for fid, uid, p, h in rows:
+        parts = p.split('/')
+        if len(parts) < 3 or parts[0].lower() != 'retroarch':
+            continue
+        if parts[1].lower() not in ('saves', 'states'):
+            continue
+        basename = parts[-1].lower()
+        canonical.setdefault((uid, basename), []).append((fid, p, h))
+
+    candidates = []
+    for fid, uid, p, h in rows:
+        parts = p.split('/')
+        if len(parts) != 2 or parts[0].lower() != 'retroarch':
+            continue
+        basename = parts[-1].lower()
+        siblings = canonical.get((uid, basename), [])
+        if not siblings:
+            continue  # no canonical copy — leave for manual review
+        # Require hash agreement when we have it on both sides; otherwise
+        # accept basename match (best we can do for rows missing hashes).
+        if h:
+            sib_hashes = {sh for _, _, sh in siblings if sh}
+            if sib_hashes and h not in sib_hashes:
+                continue
+        canonical_path = siblings[0][1]
+        hash_matched = bool(h and any(sh == h for _, _, sh in siblings))
+        candidates.append((fid, uid, p, canonical_path, hash_matched))
+    return candidates
 
 
 _EXT_TO_SYSTEM = {
@@ -320,6 +420,19 @@ def run(apply: bool, only: set[str] | None, user_id: int | None) -> None:
             else:
                 _delete_row(cursor, uid, file_id, path, apply)
             break  # one category per row is enough
+
+    if not only or 'ra_root_flat' in only:
+        print("\n--- RetroArch root-flat scan (delete when canonical copy exists) ---")
+        flat = _find_ra_root_flat(cursor, user_id)
+        print(f"Found {len(flat)} root-flat rows with a canonical copy under saves/ or states/.")
+        for fid, _uid, p, canon, hash_match in flat[:20]:
+            tag = '(hash match)' if hash_match else '(basename only — no hash)'
+            print(f"  drop [{fid}] {p}  ←  keep {canon}  {tag}")
+        if len(flat) > 20:
+            print(f"  ... and {len(flat) - 20} more rows")
+        if apply:
+            for fid, uid, p, _canon, _hm in flat:
+                _delete_row(cursor, uid, fid, p, apply=True)
 
     if not only or 'xnamespace' in only:
         print("\n--- Cross-namespace duplicate scan ---")
