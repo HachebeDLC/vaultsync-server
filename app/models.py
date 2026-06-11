@@ -1,12 +1,12 @@
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 class UserLogin(BaseModel):
-    email: str
+    email: EmailStr
     password: str
 
 class UserRegister(BaseModel):
-    email: str
+    email: EmailStr
     password: str
     username: Optional[str] = None
 

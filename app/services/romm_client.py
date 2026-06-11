@@ -51,25 +51,38 @@ class RomMClient:
         self.api_key = api_key
         self.headers = {"Authorization": f"Bearer {api_key}"}
         self._version: Optional[str] = None
+        self._client: Optional[httpx.AsyncClient] = None
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Returns the shared AsyncClient, creating it if needed."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient()
+        return self._client
+
+    async def close(self):
+        """Cleanly closes the shared HTTP client. Call this on app shutdown."""
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
 
     async def heartbeat(self) -> Tuple[bool, Optional[str]]:
         """Calls /api/heartbeat; caches the server version string. Returns (ok, version)."""
         if not self.base_url:
             return False, None
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    f"{self.base_url}/api/heartbeat",
-                    headers=self.headers,
-                    timeout=10.0,
-                )
-                if resp.status_code != 200:
-                    return False, None
-                data = resp.json() or {}
-                system = data.get("SYSTEM") or data.get("system") or {}
-                version = system.get("VERSION") or system.get("version")
-                self._version = version
-                return True, version
+            client = await self._get_client()
+            resp = await client.get(
+                f"{self.base_url}/api/heartbeat",
+                headers=self.headers,
+                timeout=10.0,
+            )
+            if resp.status_code != 200:
+                return False, None
+            data = resp.json() or {}
+            system = data.get("SYSTEM") or data.get("system") or {}
+            version = system.get("VERSION") or system.get("version")
+            self._version = version
+            return True, version
         except Exception as e:
             logger.error(f"RomM heartbeat failed: {e}")
             return False, None
@@ -82,21 +95,21 @@ class RomMClient:
         if not self.base_url or not self.api_key:
             return False, "RomM URL or API key is not configured"
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    f"{self.base_url}/api/roms",
-                    params={"limit": 1, "offset": 0},
-                    headers=self.headers,
-                    timeout=10.0,
-                )
-                if resp.status_code == 200:
-                    return True, "RomM instance is reachable and API key is valid"
-                elif resp.status_code == 401:
-                    return False, "RomM authentication failed (401) — API key is invalid or expired"
-                elif resp.status_code == 403:
-                    return False, "RomM access forbidden (403) — key lacks required permissions"
-                else:
-                    return False, f"RomM returned unexpected status {resp.status_code} from {self.base_url}"
+            client = await self._get_client()
+            resp = await client.get(
+                f"{self.base_url}/api/roms",
+                params={"limit": 1, "offset": 0},
+                headers=self.headers,
+                timeout=10.0,
+            )
+            if resp.status_code == 200:
+                return True, "RomM instance is reachable and API key is valid"
+            elif resp.status_code == 401:
+                return False, "RomM authentication failed (401) — API key is invalid or expired"
+            elif resp.status_code == 403:
+                return False, "RomM access forbidden (403) — key lacks required permissions"
+            else:
+                return False, f"RomM returned unexpected status {resp.status_code} from {self.base_url}"
         except httpx.ConnectError:
             return False, f"Could not connect to RomM at {self.base_url} — host unreachable"
         except httpx.TimeoutException:
@@ -113,34 +126,34 @@ class RomMClient:
         offset = 0
         limit = 1000
 
-        async with httpx.AsyncClient() as client:
-            while True:
-                try:
-                    resp = await client.get(
-                        f"{self.base_url}/api/roms",
-                        params={"limit": limit, "offset": offset},
-                        headers=self.headers,
-                        timeout=60.0,
-                    )
+        client = await self._get_client()
+        while True:
+            try:
+                resp = await client.get(
+                    f"{self.base_url}/api/roms",
+                    params={"limit": limit, "offset": offset},
+                    headers=self.headers,
+                    timeout=60.0,
+                )
 
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        items = data.get("items", [])
-                        if not items:
-                            break
-
-                        all_items.extend(items)
-                        offset += limit
-
-                        if len(items) < limit:
-                            break
-                    else:
-                        logger.error(f"RomM API Error: {resp.status_code} to {self.base_url}")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    items = data.get("items", [])
+                    if not items:
                         break
 
-                except Exception as e:
-                    logger.error(f"Failed to fetch RomM library: {str(e)}")
+                    all_items.extend(items)
+                    offset += limit
+
+                    if len(items) < limit:
+                        break
+                else:
+                    logger.error(f"RomM API Error: {resp.status_code} to {self.base_url}")
                     break
+
+            except Exception as e:
+                logger.error(f"Failed to fetch RomM library: {str(e)}")
+                break
 
         return all_items
 
@@ -166,17 +179,17 @@ class RomMClient:
             "hostname": hostname,
         }
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"{self.base_url}/api/devices",
-                    json=body,
-                    headers=self.headers,
-                    timeout=15.0,
-                )
-                if resp.status_code in (200, 201):
-                    data = resp.json() or {}
-                    return data.get("device_id") or data.get("id")
-                logger.error(f"RomM device registration failed: {resp.status_code} {resp.text}")
+            client = await self._get_client()
+            resp = await client.post(
+                f"{self.base_url}/api/devices",
+                json=body,
+                headers=self.headers,
+                timeout=15.0,
+            )
+            if resp.status_code in (200, 201):
+                data = resp.json() or {}
+                return data.get("device_id") or data.get("id")
+            logger.error(f"RomM device registration failed: {resp.status_code} {resp.text}")
         except Exception as e:
             logger.error(f"RomM device registration error: {e}")
         return None
@@ -228,23 +241,23 @@ class RomMClient:
                 params["device_id"] = device_id
                 params["overwrite"] = "true" if overwrite else "false"
 
-            async with httpx.AsyncClient() as client:
-                with open(file_path, "rb") as f:
-                    files = {"saveFile": (filename, f, "application/octet-stream")}
-                    resp = await client.post(
-                        f"{self.base_url}/api/saves",
-                        params=params,
-                        files=files,
-                        headers=self.headers,
-                        timeout=60.0,
-                    )
-                    if resp.status_code in (200, 201):
-                        return True
-                    logger.error(
-                        f"RomM upload_save failed: {resp.status_code} rom={rom_id} "
-                        f"emulator={emulator} slot={slot} body={resp.text[:300]}"
-                    )
-                    return False
+            client = await self._get_client()
+            with open(file_path, "rb") as f:
+                files = {"saveFile": (filename, f, "application/octet-stream")}
+                resp = await client.post(
+                    f"{self.base_url}/api/saves",
+                    params=params,
+                    files=files,
+                    headers=self.headers,
+                    timeout=60.0,
+                )
+                if resp.status_code in (200, 201):
+                    return True
+                logger.error(
+                    f"RomM upload_save failed: {resp.status_code} rom={rom_id} "
+                    f"emulator={emulator} slot={slot} body={resp.text[:300]}"
+                )
+                return False
         except Exception as e:
             logger.error(f"RomM upload failed: {str(e)}")
         return False
@@ -265,23 +278,23 @@ class RomMClient:
             if device_id and self.supports_device_api():
                 params["device_id"] = device_id
 
-            async with httpx.AsyncClient() as client:
-                with open(file_path, "rb") as f:
-                    files = {"stateFile": (filename, f, "application/octet-stream")}
-                    resp = await client.post(
-                        f"{self.base_url}/api/states",
-                        params=params,
-                        files=files,
-                        headers=self.headers,
-                        timeout=60.0,
-                    )
-                    if resp.status_code in (200, 201):
-                        return True
-                    logger.error(
-                        f"RomM upload_state failed: {resp.status_code} rom={rom_id} "
-                        f"emulator={emulator} body={resp.text[:300]}"
-                    )
-                    return False
+            client = await self._get_client()
+            with open(file_path, "rb") as f:
+                files = {"stateFile": (filename, f, "application/octet-stream")}
+                resp = await client.post(
+                    f"{self.base_url}/api/states",
+                    params=params,
+                    files=files,
+                    headers=self.headers,
+                    timeout=60.0,
+                )
+                if resp.status_code in (200, 201):
+                    return True
+                logger.error(
+                    f"RomM upload_state failed: {resp.status_code} rom={rom_id} "
+                    f"emulator={emulator} body={resp.text[:300]}"
+                )
+                return False
         except Exception as e:
             logger.error(f"RomM state upload failed: {str(e)}")
         return False
@@ -300,155 +313,162 @@ class RomMClient:
             if device_id and self.supports_device_api():
                 list_params["device_id"] = device_id
 
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    f"{self.base_url}/api/saves",
-                    params=list_params,
-                    headers=self.headers,
-                    timeout=30.0,
-                )
-                if resp.status_code != 200:
-                    logger.error(f"RomM failed to fetch saves for {rom_id}: {resp.status_code}")
-                    return None
+            client = await self._get_client()
+            resp = await client.get(
+                f"{self.base_url}/api/saves",
+                params=list_params,
+                headers=self.headers,
+                timeout=30.0,
+            )
+            if resp.status_code != 200:
+                logger.error(f"RomM failed to fetch saves for {rom_id}: {resp.status_code}")
+                return None
 
-                saves = resp.json()
-                if not saves:
-                    logger.info(f"No saves found for RomM ID {rom_id}")
-                    return None
+            saves = resp.json()
+            if not saves:
+                logger.info(f"No saves found for RomM ID {rom_id}")
+                return None
 
-                latest_save = sorted(saves, key=lambda x: x.get('updated_at', ''), reverse=True)[0]
-                save_id = latest_save['id']
-                file_name = (
-                    latest_save.get('file_name')
-                    or latest_save.get('filename')
-                    or latest_save.get('name')
-                    or "save.zip"
-                )
+            latest_save = sorted(saves, key=lambda x: x.get('updated_at', ''), reverse=True)[0]
+            save_id = latest_save['id']
+            file_name = (
+                latest_save.get('file_name')
+                or latest_save.get('filename')
+                or latest_save.get('name')
+                or "save.zip"
+            )
 
-                dl_params: Dict[str, object] = {}
-                if device_id and self.supports_device_api():
-                    dl_params["device_id"] = device_id
+            dl_params: Dict[str, object] = {}
+            if device_id and self.supports_device_api():
+                dl_params["device_id"] = device_id
 
-                dl_resp = await client.get(
-                    f"{self.base_url}/api/saves/{save_id}/content/{file_name}",
+            dest_url = f"{self.base_url}/api/saves/{save_id}/content/{file_name}"
+            fallback_url = f"{self.base_url}/api/saves/{save_id}/content"
+
+            os.makedirs(dest_dir, exist_ok=True)
+            dest_path = os.path.join(dest_dir, file_name)
+
+            for url in (dest_url, fallback_url):
+                async with client.stream(
+                    "GET", url,
                     headers=self.headers,
                     params=dl_params or None,
                     timeout=120.0,
                     follow_redirects=True,
-                )
-                if dl_resp.status_code == 404:
-                    dl_resp = await client.get(
-                        f"{self.base_url}/api/saves/{save_id}/content",
-                        headers=self.headers,
-                        params=dl_params or None,
-                        timeout=120.0,
-                        follow_redirects=True,
-                    )
+                ) as dl_resp:
+                    if dl_resp.status_code == 404:
+                        continue
+                    if dl_resp.status_code == 200:
+                        with open(dest_path, "wb") as f:
+                            async for chunk in dl_resp.aiter_bytes(65536):
+                                f.write(chunk)
+                        return dest_path
+                    logger.error(f"Failed to download save content {save_id}: {dl_resp.status_code}")
+                    return None
 
-                if dl_resp.status_code == 200:
-                    os.makedirs(dest_dir, exist_ok=True)
-                    dest_path = os.path.join(dest_dir, file_name)
-                    with open(dest_path, "wb") as f:
-                        f.write(dl_resp.content)
-                    return dest_path
-                logger.error(f"Failed to download save content {save_id}: {dl_resp.status_code}")
+            logger.error(f"Save content not found for save_id={save_id}")
         except Exception as e:
             logger.error(f"RomM download failed: {str(e)}")
         return None
 
     async def pull_save_from_romm(
         self,
-        conn,
         romm_id: int,
-        user_id: int,
+        device_id: Optional[str] = None,
     ) -> Tuple[str, Dict]:
         """Downloads the latest save for a RomM rom_id to a temp file.
 
         Returns `(tmp_path, metadata)`; caller owns `tmp_path` and must delete it.
         Raises `RommNotFound`, `RommUpstreamError`, or `RommUnavailable` on failure.
+
+        `device_id` must be resolved by the caller (via `ensure_device_registered`)
+        before calling this method so that the DB connection is not held during the
+        potentially long HTTP download.
         """
         if not self.api_key or not self.base_url:
             raise RommUnavailable("RomM client is not configured")
-
-        device_id = await self.ensure_device_registered(conn, user_id)
 
         list_params: Dict[str, object] = {"rom_id": romm_id}
         if device_id and self.supports_device_api():
             list_params["device_id"] = device_id
 
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    f"{self.base_url}/api/saves",
-                    params=list_params,
-                    headers=self.headers,
-                    timeout=30.0,
-                )
-                if resp.status_code == 404:
-                    raise RommNotFound(f"RomM rom_id={romm_id} not found")
-                if resp.status_code != 200:
-                    raise RommUpstreamError(
-                        f"RomM returned {resp.status_code} listing saves for rom_id={romm_id}"
-                    )
-
-                saves = resp.json() or []
-                if not saves:
-                    raise RommNotFound(f"No saves available for RomM rom_id={romm_id}")
-
-                latest = sorted(saves, key=lambda x: x.get("updated_at", ""), reverse=True)[0]
-                save_id = latest["id"]
-                file_name = (
-                    latest.get("file_name")
-                    or latest.get("filename")
-                    or latest.get("name")
-                    or "save.bin"
+            client = await self._get_client()
+            resp = await client.get(
+                f"{self.base_url}/api/saves",
+                params=list_params,
+                headers=self.headers,
+                timeout=30.0,
+            )
+            if resp.status_code == 404:
+                raise RommNotFound(f"RomM rom_id={romm_id} not found")
+            if resp.status_code != 200:
+                raise RommUpstreamError(
+                    f"RomM returned {resp.status_code} listing saves for rom_id={romm_id}"
                 )
 
-                dl_params: Dict[str, object] = {}
-                if device_id and self.supports_device_api():
-                    dl_params["device_id"] = device_id
+            saves = resp.json() or []
+            if not saves:
+                raise RommNotFound(f"No saves available for RomM rom_id={romm_id}")
 
-                dl_resp = await client.get(
+            latest = sorted(saves, key=lambda x: x.get("updated_at", ""), reverse=True)[0]
+            save_id = latest["id"]
+            file_name = (
+                latest.get("file_name")
+                or latest.get("filename")
+                or latest.get("name")
+                or "save.bin"
+            )
+
+            dl_params: Dict[str, object] = {}
+            if device_id and self.supports_device_api():
+                dl_params["device_id"] = device_id
+
+            fd, tmp_path = tempfile.mkstemp(prefix="romm_pull_", suffix=f"_{file_name}")
+            try:
+                downloaded = 0
+                for url in (
                     f"{self.base_url}/api/saves/{save_id}/content/{file_name}",
-                    headers=self.headers,
-                    params=dl_params or None,
-                    timeout=120.0,
-                    follow_redirects=True,
-                )
-                if dl_resp.status_code == 404:
-                    dl_resp = await client.get(
-                        f"{self.base_url}/api/saves/{save_id}/content",
+                    f"{self.base_url}/api/saves/{save_id}/content",
+                ):
+                    async with client.stream(
+                        "GET", url,
                         headers=self.headers,
                         params=dl_params or None,
                         timeout=120.0,
                         follow_redirects=True,
-                    )
-                if dl_resp.status_code == 404:
+                    ) as dl_resp:
+                        if dl_resp.status_code == 404:
+                            continue
+                        if dl_resp.status_code != 200:
+                            raise RommUpstreamError(
+                                f"RomM returned {dl_resp.status_code} downloading save_id={save_id}"
+                            )
+                        with os.fdopen(fd, "wb") as fout:
+                            async for chunk in dl_resp.aiter_bytes(65536):
+                                fout.write(chunk)
+                                downloaded += len(chunk)
+                        fd = -1  # fdopen consumed the fd
+                        break
+                else:
                     raise RommNotFound(f"RomM save_id={save_id} content not found")
-                if dl_resp.status_code != 200:
-                    raise RommUpstreamError(
-                        f"RomM returned {dl_resp.status_code} downloading save_id={save_id}"
-                    )
-
-                fd, tmp_path = tempfile.mkstemp(prefix="romm_pull_", suffix=f"_{file_name}")
+            except Exception:
+                if fd != -1:
+                    os.close(fd)
                 try:
-                    with os.fdopen(fd, "wb") as fout:
-                        fout.write(dl_resp.content)
-                except Exception:
-                    try:
-                        os.remove(tmp_path)
-                    except OSError:
-                        pass
-                    raise
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+                raise
 
-                return tmp_path, {
-                    "save_id": save_id,
-                    "romm_id": romm_id,
-                    "file_name": file_name,
-                    "updated_at": latest.get("updated_at"),
-                    "emulator": latest.get("emulator"),
-                    "size": len(dl_resp.content),
-                }
+            return tmp_path, {
+                "save_id": save_id,
+                "romm_id": romm_id,
+                "file_name": file_name,
+                "updated_at": latest.get("updated_at"),
+                "emulator": latest.get("emulator"),
+                "size": downloaded,
+            }
         except (httpx.ConnectError, httpx.TimeoutException) as e:
             raise RommUnavailable(f"Could not reach RomM at {self.base_url}: {e}") from e
 

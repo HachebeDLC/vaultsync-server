@@ -16,7 +16,9 @@ os.makedirs(STORAGE_DIR, exist_ok=True)
 DB_HOST = os.environ.get("DB_HOST", "db")
 DB_NAME = os.environ.get("DB_NAME", "vaultsync")
 DB_USER = os.environ.get("DB_USER", "vaultsync")
-DB_PASS = os.environ.get("DB_PASS", "vaultsync_password")
+DB_PASS = os.environ.get("DB_PASS")
+if not DB_PASS:
+    raise ValueError("DB_PASS environment variable is missing!")
 
 # --- Redis ---
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")

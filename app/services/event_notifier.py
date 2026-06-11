@@ -18,6 +18,7 @@ class EventNotifier:
         self._listen_task: Optional[asyncio.Task] = None
         self._redis: Optional[redis.Redis] = None
         self._pubsub: Optional[redis.client.PubSub] = None
+        self._publish_redis: Optional[redis.Redis] = None
 
     async def _ensure_listening(self):
         """Starts the Redis Pub/Sub background task if not already running."""
@@ -97,23 +98,28 @@ class EventNotifier:
                 if not self.user_connections[user_id]:
                     del self.user_connections[user_id]
 
+    async def _get_publish_redis(self) -> redis.Redis:
+        """Returns a persistent Redis connection for publishing, creating it if needed."""
+        if self._publish_redis is None:
+            self._publish_redis = redis.Redis(host=REDIS_HOST, port=REDIS_PORT)
+        return self._publish_redis
+
     async def broadcast_to_user(self, user_id: int, payload: dict, event: str = "file_available", target_device: Optional[str] = None):
         """
         Sends an event to all devices of a user across all worker processes via Redis PUBLISH.
         """
         try:
-            r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT)
-            
+            r = await self._get_publish_redis()
+
             notification_data = {
                 "user_id": user_id,
                 "event": event,
                 "payload": payload,
                 "target_device": target_device
             }
-            
+
             payload_str = json.dumps(notification_data)
             await r.publish('vaultsync_events', payload_str)
-            await r.close()
             logger.debug(f"✅ SSE: Published to user {user_id} via Redis")
         except Exception as e:
             logger.error(f"❌ SSE: Redis publish failed: {e}")

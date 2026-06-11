@@ -112,6 +112,7 @@ class VersionManager:
 
         shutil.copy2(source_path, destination_path)
         logger.info(f"⏪ RESTORED: {version_id} -> {path}")
+        return True
 
     def begin_upload(self, user_id: int, path: str, device_name: str):
         """
@@ -135,4 +136,3 @@ class VersionManager:
             self._pending.discard((user_id, path))
 
 version_manager = VersionManager(STORAGE_DIR)
-VersionManager(STORAGE_DIR)

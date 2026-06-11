@@ -2,8 +2,6 @@ import os
 import logging
 import asyncio
 import re
-# Global lock for RomM API rate limiting
-romm_push_lock = asyncio.Lock()
 import aiofiles
 import hashlib
 from typing import List, Optional
@@ -33,6 +31,18 @@ from .. import crud
 logger = logging.getLogger("VaultSync")
 router = APIRouter(prefix="/api/v1")
 
+# Global lock for RomM API rate limiting (one push at a time to avoid flooding).
+romm_push_lock = asyncio.Lock()
+
+# Tracks fire-and-forget tasks to prevent GC from collecting them mid-flight.
+_background_fire_tasks: set[asyncio.Task] = set()
+
+def _fire_and_forget(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _background_fire_tasks.add(task)
+    task.add_done_callback(_background_fire_tasks.discard)
+    return task
+
 # Per-file upload locks keyed by (user_id, path).
 # Prevents two concurrent finalize_upload calls for the same file from
 # racing on truncate → upsert → complete_upload.
@@ -45,6 +55,13 @@ async def _get_upload_lock(user_id: int, path: str) -> asyncio.Lock:
         if key not in _upload_locks:
             _upload_locks[key] = asyncio.Lock()
         return _upload_locks[key]
+
+async def _release_upload_lock(user_id: int, path: str) -> None:
+    key = (user_id, path)
+    async with _upload_locks_mutex:
+        lock = _upload_locks.get(key)
+        if lock and not lock.locked():
+            _upload_locks.pop(key, None)
 
 @router.get("/files")
 def list_files(prefix: Optional[str] = None, limit: int = 200, after: Optional[str] = None, current_user = Depends(get_current_user)):
@@ -198,7 +215,12 @@ async def upload_fragment(request: Request, background_tasks: BackgroundTasks, c
     import urllib.parse
     raw_path = headers.get("x-vaultsync-path")
     path = urllib.parse.unquote(raw_path) if raw_path else None
-    offset = int(headers.get("x-vaultsync-offset") or 0)
+    try:
+        offset = int(headers.get("x-vaultsync-offset") or 0)
+        if offset < 0:
+            raise ValueError("negative offset")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid x-vaultsync-offset header")
     if not path or not is_safe_path(current_user['id'], path):
         raise HTTPException(status_code=403)
         
@@ -249,21 +271,12 @@ async def finalize_upload(request: Request, body: FinalizeRequest, background_ta
         raise HTTPException(status_code=404)
 
     actual_hash = body.hash
-    block_hashes = []
 
     file_lock = await _get_upload_lock(user_id, body.path)
     async with file_lock:
-        def _get_metadata():
-            with get_db() as conn:
-                return crud.get_file_metadata(conn, user_id, body.path)
-
-        metadata = await asyncio.to_thread(_get_metadata)
-        if metadata and metadata.get('blocks'):
-            block_hashes = metadata['blocks']
-
-        # If it's a completely new file or we don't have blocks, calculate the hard way.
-        if not block_hashes:
-            _, block_hashes = await calculate_file_hash_and_blocks(safe_path)
+        # Always recalculate block hashes from the file on disk; reusing the previous
+        # manifest would corrupt delta-sync if uploaded over a metadata cache miss.
+        _, block_hashes = await calculate_file_hash_and_blocks(safe_path)
 
         size = body.size or os.path.getsize(safe_path)
 
@@ -298,11 +311,14 @@ async def finalize_upload(request: Request, body: FinalizeRequest, background_ta
         # will produce a fresh snapshot.
         version_manager.complete_upload(user_id, body.path)
 
+    # Evict the lock entry so _upload_locks doesn't grow unboundedly.
+    await _release_upload_lock(user_id, body.path)
+
     # Extract system_id directly from the path structure
     system_id = body.path.split('/')[0] if '/' in body.path else 'unknown'
 
     # Broadcast event to all listening clients
-    asyncio.create_task(event_notifier.broadcast_to_user(user_id, {
+    _fire_and_forget(event_notifier.broadcast_to_user(user_id, {
         "path": body.path,
         "system_id": system_id,
         "size": size,
@@ -623,9 +639,10 @@ async def restore_version(body: RestoreRequest, current_user = Depends(get_curre
     if not is_safe_path(user_id, body.path):
         raise HTTPException(status_code=403)
     
-    success = await version_manager.restore_version(user_id, body.path, body.version_id)
-    if not success:
-        raise HTTPException(status_code=500, detail="Restore failed")
+    try:
+        await asyncio.to_thread(version_manager.restore_version, user_id, body.path, body.version_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Version not found")
         
     def _get_meta():
         with get_db() as conn:
@@ -634,7 +651,7 @@ async def restore_version(body: RestoreRequest, current_user = Depends(get_curre
     meta = await asyncio.to_thread(_get_meta)
     if meta:
         system_id = body.path.split('/')[0] if '/' in body.path else 'unknown'
-        asyncio.create_task(event_notifier.broadcast_to_user(user_id, {
+        _fire_and_forget(event_notifier.broadcast_to_user(user_id, {
             "path": body.path,
             "system_id": system_id,
             "size": meta['size'],
@@ -675,9 +692,17 @@ async def romm_pull(body: RomMPullRequest, current_user = Depends(get_current_us
     if current_user.get('romm_url') and current_user.get('romm_api_key'):
         target_client = RomMClient(current_user['romm_url'], current_user['romm_api_key'])
 
+    # Resolve device_id in a short-lived DB transaction so the connection is
+    # returned to the pool before the potentially long RomM download begins.
+    device_id = None
     try:
         with get_db() as conn:
-            tmp_path, meta = await target_client.pull_save_from_romm(conn, body.rom_id, user_id)
+            device_id = await target_client.ensure_device_registered(conn, user_id)
+    except Exception as e:
+        logger.warning(f"RomM device registration skipped for pull: {e}")
+
+    try:
+        tmp_path, meta = await target_client.pull_save_from_romm(body.rom_id, device_id=device_id)
     except RommNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
     except RommUnavailable as e:

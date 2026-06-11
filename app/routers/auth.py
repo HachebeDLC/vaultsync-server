@@ -61,13 +61,22 @@ def register(request: Request, user: UserRegister):
         }
         
     except pg_errors.UniqueViolation:
-        logger.warning(f"⚠️ REGISTER: Email already exists: {user.email}")
-        raise HTTPException(status_code=400, detail="User already exists")
+        logger.warning(f"⚠️ REGISTER: Duplicate email attempted: {user.email}")
+        raise HTTPException(status_code=400, detail="Registration failed")
         
     except Exception as e:
         logger.error(f"❌ REGISTER ERROR: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Registration failed due to a server error")
+
+_DUMMY_HASH = pwd_context.hash("dummy_password_for_timing_equalization")
+
+def _resolve_salt(user: dict) -> str:
+    salt = user.get('salt')
+    if not salt:
+        logger.warning(f"⚠️ LOGIN: User {user['id']} has no salt — using email as fallback (legacy account)")
+        return user['email']
+    return salt
 
 @router.post("/login")
 @limiter.limit("5/minute")
@@ -79,8 +88,14 @@ def login(request: Request, credentials: UserLogin):
     try:
         with get_db() as conn:
             user = crud.get_user_by_email(conn, credentials.email)
-            
-        if not user or not pwd_context.verify(credentials.password, user['password_hash']):
+
+        if not user:
+            # Run verify against a dummy hash so the response time for unknown
+            # emails matches that for known ones, preventing user enumeration.
+            pwd_context.verify(credentials.password, _DUMMY_HASH)
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
+        if not pwd_context.verify(credentials.password, user['password_hash']):
             logger.warning(f"⚠️ LOGIN: Invalid credentials for {credentials.email}")
             raise HTTPException(status_code=401, detail="Invalid credentials")
             
@@ -90,9 +105,9 @@ def login(request: Request, credentials: UserLogin):
             "token": access_token, 
             "refresh_token": refresh_token,
             "user": {
-                "id": str(user['id']), 
-                "email": user['email'], 
-                "salt": user.get('salt') or user['email']
+                "id": str(user['id']),
+                "email": user['email'],
+                "salt": _resolve_salt(user),
             }
         }
     except HTTPException:

@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request
 from ..database import get_db
 from ..models import RecoverySetupRequest, RecoveryPayloadRequest
@@ -18,16 +19,20 @@ def setup_recovery(body: RecoverySetupRequest, current_user = Depends(get_curren
     return {"message": "OK"}
 
 @router.post("/payload")
-@limiter.limit("5/minute")
-def get_recovery_payload(request: Request, body: RecoveryPayloadRequest):
+@limiter.limit("3/minute")
+@limiter.limit("10/hour")
+async def get_recovery_payload(request: Request, body: RecoveryPayloadRequest):
     """
-    Retrieves the recovery payload for a given email address. 
+    Retrieves the recovery payload for a given email address.
     Requires email as a key but doesn't require authentication (used when password is lost).
-    Rate limited to prevent email harvesting.
+    Rate limited and response-time-equalized to prevent email harvesting.
     """
     with get_db() as conn:
         user = crud.get_recovery_info(conn, body.email)
-        
+
     if not user or not user['recovery_payload']:
+        # Small constant delay to equalize timing between found and not-found responses,
+        # making email enumeration via timing attacks harder.
+        await asyncio.sleep(0.1)
         raise HTTPException(status_code=404, detail="Recovery information not found")
     return user

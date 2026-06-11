@@ -97,23 +97,22 @@ async def _process_user_romm_sync(user_id: int):
             
 async def auto_sync_loop():
     logger.info("RomM Auto-Sync background task started.")
+    # Wait for the server to finish starting before the first cycle.
+    await asyncio.sleep(60)
     while True:
         try:
-            # Sleep for an hour or so, but initially wait a minute so server fully starts
-            await asyncio.sleep(60)
-            
             with get_db() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT id FROM users WHERE romm_api_key IS NOT NULL AND romm_url IS NOT NULL")
                 users = cursor.fetchall()
-                
+
             for u in users:
                 await _process_user_romm_sync(u[0])
-                
+
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.error(f"Auto-Sync loop encountered an error: {e}")
-        
-        # Check every 10 minutes
+
+        # Check every 10 minutes.
         await asyncio.sleep(600)
