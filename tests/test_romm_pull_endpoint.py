@@ -44,6 +44,11 @@ def _fake_get_db():
 # Patch `get_db` in the router module so no real DB pool is required.
 files_router.get_db = _fake_get_db
 
+# Stub device registration on the global client so endpoint tests never make a
+# real HTTP call to a RomM instance (device_id is now resolved in the router
+# before pull_save_from_romm is called).
+romm_client_module.romm_client.ensure_device_registered = AsyncMock(return_value=None)
+
 app.dependency_overrides[get_current_user] = _fake_user
 client = TestClient(app)
 

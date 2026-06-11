@@ -1,4 +1,4 @@
-"""Unit tests for `romm_sync_test.load_env`.
+"""Unit tests for `attic.romm_sync_test.load_env`.
 
 Specifically guards the "empty .env value must not clobber a pre-set env var"
 rule, which was previously wiping `VAULTSYNC_SECRET` during test runs.
@@ -7,8 +7,9 @@ import os
 import tempfile
 
 os.environ.setdefault("VAULTSYNC_SECRET", "dummy")
+os.environ.setdefault("DB_PASS", "testpass")
 
-from romm_sync_test import load_env  # noqa: E402
+from attic.romm_sync_test import load_env  # noqa: E402
 
 
 def _write_env(contents: str) -> str:

@@ -3,14 +3,16 @@ import os
 import unittest
 from unittest.mock import patch, MagicMock
 
-# Setup path
-sys.path.append(os.path.dirname(__file__))
+# Setup path (repo root, so `import app` works in script mode too)
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
 
 # Mock config
 os.environ["VAULTSYNC_SECRET"] = "test_secret"
 os.environ["DATABASE_URL"] = "postgresql://user:pass@localhost/db"
 os.environ["ROMM_URL"] = "http://mock-romm"
 os.environ["ROMM_API_KEY"] = "mock-key"
+os.environ.setdefault("DB_PASS", "testpass")
 
 from app.services.title_db_service import TitleDBService
 from app.services.romm_client import RomMClient
@@ -18,13 +20,18 @@ from app.services.romm_client import RomMClient
 class TestVaultSyncLogic(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        assets_path = os.path.join(os.path.dirname(__file__), "app", "assets")
+        assets_path = os.path.join(_ROOT, "app", "assets")
         cls.title_db = TitleDBService(assets_path)
 
     def test_3ds_translation(self):
         name = self.title_db.translate("00030700")
         self.assertEqual(name, "Mario Kart™ 7")
 
+    @unittest.skip(
+        "RomMClient.get_rom_id_by_path was removed in d07c3fc (matching now "
+        "happens against the locally cached RomM library); test kept for "
+        "historical reference."
+    )
     def test_smart_link_translation_flow(self):
         # 01007300020FA000 is Zelda BOTW in title_db.json
         client = RomMClient()
@@ -50,6 +57,11 @@ class TestVaultSyncLogic(unittest.TestCase):
             params = kwargs.get("params", {})
             self.assertEqual(params.get("platform_slug"), "switch")
 
+    @unittest.skip(
+        "RomMClient.get_rom_id_by_path was removed in d07c3fc (matching now "
+        "happens against the locally cached RomM library); test kept for "
+        "historical reference."
+    )
     def test_leading_number_stripping(self):
         client = RomMClient()
         with patch("httpx.AsyncClient.get") as mock_get:

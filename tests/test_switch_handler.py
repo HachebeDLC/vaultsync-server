@@ -1,4 +1,4 @@
-"""Unit tests for `romm_sync_test.SwitchHandler`.
+"""Unit tests for `attic.romm_sync_test.SwitchHandler`.
 
 Covers the Argosy-parity title-ID validator, device-save set, and the path
 scanner that replaced the old `parts[1]` indexing.
@@ -8,8 +8,9 @@ import os
 # Must be set before importing romm_sync_test — its module-level code pulls in
 # `app.config`, which hard-errors if the secret is missing.
 os.environ.setdefault("VAULTSYNC_SECRET", "dummy")
+os.environ.setdefault("DB_PASS", "testpass")
 
-from romm_sync_test import SwitchHandler  # noqa: E402
+from attic.romm_sync_test import SwitchHandler  # noqa: E402
 
 
 def test_is_valid_title_id():
