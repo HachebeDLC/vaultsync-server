@@ -2,7 +2,9 @@
 Server-side cleanup for garbage patterns the v1.5+ client now blocks at the resolver.
 
 Each category mirrors a resolver guard in lib/features/sync/services/sync_path_resolver.dart.
-This script removes rows uploaded by pre-fix client versions.
+This script quarantines rows uploaded by pre-fix client versions. Physical
+files are moved under ``storage/<user>/.cleanup_trash`` before their database
+rows are removed, so an incorrect classifier can be recovered.
 
 Usage (inside the server container or with venv active):
 
@@ -16,6 +18,7 @@ import argparse
 import os
 import re
 import sys
+import time
 from collections import defaultdict
 from typing import Callable, Iterable
 
@@ -28,6 +31,9 @@ from app.config import DB_HOST, DB_NAME, DB_USER, DB_PASS, STORAGE_DIR
 # Each returns True if the row is garbage under that category.
 
 _PROFILE_ID_RE = re.compile(r'^[0-9A-Fa-f]{32}$')
+# Switch title ID: 16 hex chars starting with "01". Mirrors the app's
+# SwitchProfileResolver.isValidTitleId and the RomM SwitchHandler.
+_TITLE_ID_RE = re.compile(r'^01[0-9A-Fa-f]{14}$')
 _OS_DUP_RE = re.compile(r'(.*?)([ _-]?(?:\(\d+\)|copy|Copy))(\.[^.]+)?$')
 
 
@@ -79,20 +85,29 @@ def _is_retroarch_singular(path: str) -> tuple[bool, str]:
 
 
 def _is_switch_kitchen_sink(path: str) -> bool:
-    # Real switch path: switch/nand/user/save/0000000000000000/<32-hex>/...
-    # Garbage: switch/<not-32-hex>/... where the second segment is e.g. a
-    # game name, ROM id, or random folder dump.
+    # Legitimate switch cloud forms (must NOT be deleted):
+    #   1. switch/nand/...                      — legacy deep-nand layout
+    #   2. switch/<32-hex profile>/...          — profile-first layout
+    #   3. switch/<16-hex titleId>/...          — the CANONICAL title-ID-first
+    #      form the client actually emits. SyncPathResolver.getCloudRelPath
+    #      flattens every switch save to "<titleId>/<rest>" (see
+    #      sync_path_resolver.dart), stripping the nand/user/save/<profile>
+    #      prefix. Treating this as garbage deleted real saves, leaving the
+    #      directory skeleton behind ("N directories, 0 files").
+    # Garbage: switch/<game name | rom id | random dump>/...
     parts = path.split('/')
     if len(parts) < 2:
         return False
     if parts[0].lower() != 'switch':
         return False
-    # Allow well-formed paths through.
     if parts[1].lower() == 'nand':
         return False
-    # Anything else under switch/ that doesn't start with a 32-hex profile
-    # at depth 1 is the kitchen-sink form.
-    return not _PROFILE_ID_RE.match(parts[1])
+    if _PROFILE_ID_RE.match(parts[1]):
+        return False
+    if _TITLE_ID_RE.match(parts[1]):
+        return False
+    # Anything else under switch/ at depth 1 is the kitchen-sink form.
+    return True
 
 
 def _is_syncthing_conflict(path: str) -> bool:
@@ -197,8 +212,10 @@ CATEGORIES: list[Category] = [
              'RetroArch/<core>/<save> at wrong nesting (relocate under saves/<core>/ or states/<core>/)',
              _is_ra_core_misnested,
              _ra_core_misnested_relocator),
-    Category('switch_kitchen_sink', 'Switch entries not under nand/user/save/<16hex>/<32hex>/',
-             _is_switch_kitchen_sink),
+    # Never register switch_kitchen_sink as a destructive category. A previous
+    # version misclassified the canonical switch/<titleId>/... cloud layout and
+    # permanently removed real saves. Keep the matcher for diagnostics/tests
+    # only; Switch cleanup requires a purpose-built, non-destructive migration.
     Category('os_dup', 'OS duplicates: " (1)", " copy", "- Copy" suffix',
              _is_os_dup),
 ]
@@ -329,14 +346,68 @@ def _physical_path(user_id: int, db_path: str) -> str:
     return os.path.join(STORAGE_DIR, str(user_id), db_path.lstrip('/\\'))
 
 
+def _quarantine_physical(user_id: int, file_id: int, db_path: str) -> str | None:
+    """Move a physical blob into recoverable per-user cleanup quarantine.
+
+    Returns the quarantine path, ``None`` when the source does not exist, and
+    raises on unsafe paths or move failures. The caller must keep the DB row if
+    this raises.
+    """
+    user_root = os.path.realpath(os.path.join(STORAGE_DIR, str(user_id)))
+    source = os.path.realpath(_physical_path(user_id, db_path))
+    if os.path.commonpath([user_root, source]) != user_root:
+        raise ValueError(f"unsafe cleanup path outside user root: {db_path}")
+    if not os.path.exists(source):
+        return None
+    if not os.path.isfile(source):
+        raise OSError(f"cleanup source is not a regular file: {db_path}")
+
+    batch = f"{int(time.time() * 1000)}-{file_id}"
+    trash_root = os.path.realpath(os.path.join(user_root, '.cleanup_trash', batch))
+    destination = os.path.realpath(
+        os.path.join(trash_root, db_path.lstrip('/\\'))
+    )
+    if os.path.commonpath([trash_root, destination]) != trash_root:
+        raise ValueError(f"unsafe cleanup quarantine path: {db_path}")
+
+    if os.path.exists(destination):
+        raise FileExistsError(f"cleanup quarantine destination exists: {destination}")
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    os.replace(source, destination)
+    return destination
+
+
+def _prune_empty_dirs(user_id: int, db_path: str) -> None:
+    """Remove parent directories left empty after unlinking a file, walking up
+    until a non-empty directory or the user's storage root. Without this,
+    deleting blobs leaves behind a directory skeleton ("N directories, 0
+    files") — the exact artifact this script's switch cleanup produced before."""
+    user_root = os.path.abspath(os.path.join(STORAGE_DIR, str(user_id)))
+    d = os.path.dirname(_physical_path(user_id, db_path))
+    while True:
+        d_abs = os.path.abspath(d)
+        # Never touch the user storage root itself or anything outside it.
+        if d_abs == user_root or not d_abs.startswith(user_root + os.sep):
+            break
+        try:
+            os.rmdir(d)  # raises if the directory is not empty
+        except OSError:
+            break
+        d = os.path.dirname(d)
+
+
 def _delete_row(cursor, user_id: int, file_id: int, db_path: str, apply: bool) -> None:
-    phys = _physical_path(user_id, db_path)
     if apply:
         try:
-            if os.path.exists(phys):
-                os.remove(phys)
-        except OSError as e:
-            print(f"  ! could not unlink {phys}: {e}", file=sys.stderr)
+            quarantined = _quarantine_physical(user_id, file_id, db_path)
+            if not quarantined:
+                print(f"  ! source blob missing for {db_path}; keeping DB row", file=sys.stderr)
+                return
+            print(f"  quarantined {db_path} -> {quarantined}")
+        except (OSError, ValueError) as e:
+            print(f"  ! could not quarantine {db_path}; keeping DB row: {e}", file=sys.stderr)
+            return
+        _prune_empty_dirs(user_id, db_path)
         cursor.execute("DELETE FROM files WHERE id = %s", (file_id,))
 
 
@@ -359,12 +430,17 @@ def _relocate_row(
     collision = cursor.fetchone()
 
     if collision:
-        # Destination already exists in DB — drop the duplicate source.
+        # Destination already exists in DB — quarantine the duplicate source.
         try:
-            if os.path.exists(old_phys):
-                os.remove(old_phys)
-        except OSError as e:
-            print(f"  ! could not unlink {old_phys}: {e}", file=sys.stderr)
+            quarantined = _quarantine_physical(user_id, file_id, old_path)
+            if not quarantined:
+                print(f"  ! duplicate source missing for {old_path}; keeping DB row", file=sys.stderr)
+                return 'skipped'
+            print(f"  quarantined duplicate {old_path} -> {quarantined}")
+        except (OSError, ValueError) as e:
+            print(f"  ! could not quarantine duplicate {old_path}; keeping DB row: {e}", file=sys.stderr)
+            return 'skipped'
+        _prune_empty_dirs(user_id, old_path)
         cursor.execute("DELETE FROM files WHERE id = %s", (file_id,))
         return 'merged'
 
@@ -376,6 +452,7 @@ def _relocate_row(
         print(f"  ! could not move {old_phys} → {new_phys}: {e}", file=sys.stderr)
         return 'skipped'
 
+    _prune_empty_dirs(user_id, old_path)
     cursor.execute(
         "UPDATE files SET path = %s WHERE id = %s",
         (new_path, file_id),
@@ -454,7 +531,7 @@ def run(apply: bool, only: set[str] | None, user_id: int | None) -> None:
         n = per_cat_counts.get(cat.key, 0)
         if n == 0:
             continue
-        verb = 'relocate' if cat.relocator else 'delete'
+        verb = 'relocate' if cat.relocator else 'quarantine'
         print(f"  {cat.key:22s} {n:>6} rows to {verb}  ({cat.description})")
         for ex in per_cat_examples[cat.key]:
             print(f"      e.g. {ex}")
