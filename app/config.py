@@ -55,6 +55,10 @@ ROMM_EMULATOR_MAP = {
     'gc': 'dolphin', 'dolphin': 'dolphin', 'wii': 'dolphin',
     'psp': 'ppsspp', 'ppsspp': 'ppsspp',
     'ps2': 'pcsx2', 'pcsx2': 'pcsx2', 'aethersx2': 'pcsx2',
+    'nethersx2': 'pcsx2', 'aethersx2-turnip': 'pcsx2',
+    'nethersx2-turnip': 'pcsx2',
+    'xyz.aethersx2.android': 'pcsx2', 'xyz.nethersx2.android': 'pcsx2',
+    'xyz.aethersx2.custom': 'pcsx2', 'xyz.aethersx2.tturnip': 'pcsx2',
     '3ds': 'citra', 'citra': 'citra', 'azahar': 'citra',
     'retroarch': 'retroarch',
 }

@@ -462,6 +462,10 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
                     'gc': 'gamecube', 'dolphin': 'gamecube', 'wii': 'wii',
                     'psp': 'psp', 'ppsspp': 'psp',
                     'ps2': 'ps2', 'pcsx2': 'ps2', 'aethersx2': 'ps2',
+                    'nethersx2': 'ps2', 'aethersx2-turnip': 'ps2',
+                    'nethersx2-turnip': 'ps2',
+                    'xyz.aethersx2.android': 'ps2', 'xyz.nethersx2.android': 'ps2',
+                    'xyz.aethersx2.custom': 'ps2', 'xyz.aethersx2.tturnip': 'ps2',
                     '3ds': '3ds', 'citra': '3ds', 'azahar': '3ds',
                     'gba': 'gba', 'snes': 'snes', 'n64': 'n64', 'nds': 'nds',
                     'gb': 'gb', 'gbc': 'gbc', 'nes': 'nes', 'megadrive': 'megadrive'
@@ -489,7 +493,12 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
                         target_id = filename.split('.')[0].upper()
                     elif len(parts) == 2 and not filename.lower().endswith('.srm'):
                         target_id = filename.split('.')[0].upper()
-                elif platform in ('ps2', 'pcsx2', 'aethersx2'):
+                elif platform in (
+                    'ps2', 'pcsx2', 'aethersx2', 'nethersx2',
+                    'aethersx2-turnip', 'nethersx2-turnip',
+                    'xyz.aethersx2.android', 'xyz.nethersx2.android',
+                    'xyz.aethersx2.custom', 'xyz.aethersx2.tturnip',
+                ):
                     if filename.lower().endswith(('.ps2', '.psu')):
                         target_name = os.path.splitext(filename)[0]
                     elif '.ps2/' in body.path.lower():
