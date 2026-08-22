@@ -43,8 +43,16 @@ def list_user_files(conn, user_id: int, prefix: str = None, limit: int = 200, af
     conditions = ["user_id = %s"]
 
     if prefix:
-        conditions.append("path ILIKE %s")
-        params.append(f"{prefix}%")
+        # Match on a path *segment*, not on raw characters. `path ILIKE 'wii%'`
+        # also returns the whole `wiiu/` namespace, so the Wii system was handed
+        # a Cemu backup, wrote it into Dolphin's folder as `title/wiiu/...` and
+        # failed the download on a size that belonged to a different row.
+        # `_` and `%` are LIKE wildcards and do occur in real save paths
+        # (e.g. `Total_converted.ps2`), so escape them too.
+        base = prefix.rstrip("/")
+        escaped = base.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        conditions.append("(path = %s OR path ILIKE %s)")
+        params.extend([base, f"{escaped}/%"])
 
     if after:
         conditions.append("path > %s")
