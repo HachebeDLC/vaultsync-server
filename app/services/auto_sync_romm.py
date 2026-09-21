@@ -1,13 +1,11 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
-import os
 
 from ..database import get_db
-from ..crud import get_files_with_romm_id, upsert_file_metadata, get_file_metadata
+from ..crud import get_files_with_romm_id
 from .romm_client import get_romm_client
-from ..utils import calculate_file_hash_and_blocks
-from ..config import STORAGE_DIR
+from .event_notifier import event_notifier
 
 logger = logging.getLogger("VaultSync")
 
@@ -71,27 +69,21 @@ async def _process_user_romm_sync(user_id: int):
             # If RomM has a newer save (allow a 5-second delta to avoid push/pull loops)
             if romm_updated_at > local_updated_at + 5000:
                 logger.info(f"Auto-Sync: Found newer save on RomM for {path} (RomM: {romm_updated_at} > Local: {local_updated_at})")
-                
-                # We do a pull!
-                temp_pull_dir = os.path.join(STORAGE_DIR, "temp_pull", str(user_id))
-                safe_path = os.path.abspath(os.path.join(STORAGE_DIR, str(user_id), path.lstrip("/\\")))
-                
-                downloaded_path = await client.download_save(romm_id, temp_pull_dir)
-                if downloaded_path:
-                    os.makedirs(os.path.dirname(safe_path), exist_ok=True)
-                    import shutil
-                    shutil.move(downloaded_path, safe_path)
-                    
-                    file_size = os.path.getsize(safe_path)
-                    file_hash, blocks = await calculate_file_hash_and_blocks(safe_path)
-                    
-                    with get_db() as conn:
-                        upsert_file_metadata(
-                            conn, user_id, path, file_hash, file_size,
-                            romm_updated_at, "RomM-AutoSync", blocks
-                        )
-                        conn.commit()
-                    logger.info(f"Auto-Sync: Successfully updated {path} from RomM")
+
+                # Zero-knowledge: the server must never write to the vault. Just
+                # notify the client so it can pull, encrypt locally, and upload
+                # through the normal flow. No dedupe here — while the condition
+                # holds we re-notify every cycle (a retry for offline clients);
+                # it stops once the client uploads and updated_at catches up.
+                system_id = path.split('/')[0] if '/' in path else 'unknown'
+                await event_notifier.broadcast_to_user(user_id, {
+                    "type": "romm_save_newer",
+                    "path": path,
+                    "system_id": system_id,
+                    "romm_id": romm_id,
+                    "romm_updated_at": romm_updated_at,
+                }, event="romm_save_newer")
+                logger.info(f"Auto-Sync: Notified user {user_id} of newer RomM save for {path}")
         except Exception as e:
             logger.error(f"Auto-Sync error on {path}: {e}")
             
