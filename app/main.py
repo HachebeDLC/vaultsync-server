@@ -14,7 +14,7 @@ from .database import init_db, get_pool
 from .routers import auth, files, recovery, events
 from .limiter import limiter
 from .services.auto_sync_romm import auto_sync_loop
-from .services.romm_client import romm_client
+from .services.romm_client import romm_client, close_all_romm_clients
 
 # --- Logging ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -44,6 +44,7 @@ async def lifespan(app: FastAPI):
         pass
 
     await romm_client.close()
+    await close_all_romm_clients()
 
     pool = get_pool()
     if pool:

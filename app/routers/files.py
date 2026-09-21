@@ -18,7 +18,7 @@ from ..dependencies import get_current_user
 from ..services.reassembly_service import reassembly_service
 from ..services.romm_client import (
     romm_client,
-    RomMClient,
+    get_romm_client,
     RommNotFound,
     RommUpstreamError,
     RommUnavailable,
@@ -352,8 +352,7 @@ async def finalize_upload(request: Request, body: FinalizeRequest, background_ta
             
             async def _pull_library():
                 try:
-                    from ..services.romm_client import RomMClient
-                    client = RomMClient(romm_url_header, romm_api_key_header)
+                    client = get_romm_client(romm_url_header, romm_api_key_header)
                     all_games = await client.fetch_entire_library()
                     logger.info(f"RomM Sync: Downloaded {len(all_games)} games for user {user_id}.")
                     
@@ -426,7 +425,7 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
     # Resolve RomM Client (use user specific if available)
     target_client = romm_client
     if current_user.get('romm_url') and current_user.get('romm_api_key'):
-        target_client = RomMClient(current_user['romm_url'], current_user['romm_api_key'])
+        target_client = get_romm_client(current_user['romm_url'], current_user['romm_api_key'])
         logger.info(f"Using user-specific RomM instance: {current_user['romm_url']}")
 
     # Run reassembly in background to avoid blocking
@@ -603,30 +602,33 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
     return {"message": "RomM sync task queued"}
 
 @router.delete("/files")
-async def delete_file(body: FileRequest, background_tasks: BackgroundTasks, current_user = Depends(get_current_user)):
+async def delete_file(body: FileRequest, current_user = Depends(get_current_user)):
     """
     Deletes a file and its metadata. A historical version is created before deletion.
     """
     path = body.filename
     if not is_safe_path(current_user['id'], path):
         raise HTTPException(status_code=403)
-        
+
     user_id = current_user['id']
-    
-    def _delete_metadata():
+    safe_path = os.path.abspath(os.path.join(STORAGE_DIR, str(user_id), path.lstrip("/\\")))
+
+    def _delete():
+        # Version the file BEFORE removing it — BackgroundTasks would run after
+        # the response is sent, by which point os.remove() has already deleted
+        # the source file and create_version() would be a silent no-op.
         with get_db() as conn:
             metadata = crud.get_file_metadata(conn, user_id, path)
-            if metadata:
-                background_tasks.add_task(version_manager.create_version, user_id, path, metadata['device_name'])
+            if metadata and os.path.exists(safe_path):
+                version_manager.create_version(user_id, path, metadata['device_name'])
             crud.delete_file_metadata(conn, user_id, path)
             conn.commit()
 
-    await asyncio.to_thread(_delete_metadata)
-        
-    safe_path = os.path.abspath(os.path.join(STORAGE_DIR, str(user_id), path.lstrip("/\\")))
-    if os.path.exists(safe_path):
-        os.remove(safe_path)
-        
+        if os.path.exists(safe_path):
+            os.remove(safe_path)
+
+    await asyncio.to_thread(_delete)
+
     return {"message": "Deleted"}
 
 @router.get("/versions")
@@ -699,7 +701,7 @@ async def romm_pull(body: RomMPullRequest, current_user = Depends(get_current_us
 
     target_client = romm_client
     if current_user.get('romm_url') and current_user.get('romm_api_key'):
-        target_client = RomMClient(current_user['romm_url'], current_user['romm_api_key'])
+        target_client = get_romm_client(current_user['romm_url'], current_user['romm_api_key'])
 
     # Resolve device_id in a short-lived DB transaction so the connection is
     # returned to the pool before the potentially long RomM download begins.

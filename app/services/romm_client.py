@@ -475,3 +475,33 @@ class RomMClient:
 
 # Global default instance
 romm_client = RomMClient()
+
+# Cache of per-user RomMClient instances, keyed by (base_url, api_key).
+# Per-request `RomMClient(url, key)` construction each leaked its own
+# httpx.AsyncClient since only the global `romm_client` singleton above was
+# ever closed. Reusing instances via this cache means each (url, key) pair
+# gets exactly one underlying AsyncClient, which close_all_romm_clients()
+# can close on shutdown.
+_client_cache: Dict[Tuple[str, str], "RomMClient"] = {}
+
+
+def get_romm_client(base_url: str, api_key: str) -> "RomMClient":
+    """Returns a cached RomMClient for (base_url, api_key), creating it on first use.
+
+    Safe to call concurrently from async code on a single event loop: there
+    are no `await`s between the cache check and the insert, so no other task
+    can interleave.
+    """
+    key = (base_url.rstrip("/"), api_key)
+    client = _client_cache.get(key)
+    if client is None:
+        client = RomMClient(base_url, api_key)
+        _client_cache[key] = client
+    return client
+
+
+async def close_all_romm_clients():
+    """Closes every cached per-user RomMClient and clears the cache. Call on app shutdown."""
+    for client in list(_client_cache.values()):
+        await client.close()
+    _client_cache.clear()

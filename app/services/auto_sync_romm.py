@@ -5,7 +5,7 @@ import os
 
 from ..database import get_db
 from ..crud import get_files_with_romm_id, upsert_file_metadata, get_file_metadata
-from .romm_client import RomMClient
+from .romm_client import get_romm_client
 from ..utils import calculate_file_hash_and_blocks
 from ..config import STORAGE_DIR
 
@@ -21,7 +21,7 @@ async def _process_user_romm_sync(user_id: int):
     if not row or not row[0] or not row[1]:
         return
         
-    client = RomMClient(row[0], row[1])
+    client = get_romm_client(row[0], row[1])
     
     # Get all files mapping to a romm_id for this user
     with get_db() as conn:
