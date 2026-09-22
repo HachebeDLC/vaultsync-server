@@ -273,46 +273,101 @@ async def finalize_upload(request: Request, body: FinalizeRequest, background_ta
     actual_hash = body.hash
 
     file_lock = await _get_upload_lock(user_id, body.path)
-    async with file_lock:
-        # Always recalculate block hashes from the file on disk; reusing the previous
-        # manifest would corrupt delta-sync if uploaded over a metadata cache miss.
-        _, block_hashes = await calculate_file_hash_and_blocks(safe_path)
+    try:
+        async with file_lock:
+            # --- Guard: never let an empty upload silently erase existing content ---
+            # A finalize claiming size 0 (or backed by a literally-0-byte on-disk
+            # fragment) over a path that already has non-empty metadata matches
+            # the suspected production failure: a client whose SAF scan reports 0
+            # bytes for a file that has content (production holds 18 zero-byte
+            # saves with no prior versions). New files with no prior metadata are
+            # NOT blocked here — legitimately empty saves exist and must still be
+            # accepted the first time.
+            def _get_existing_meta():
+                with get_db() as conn:
+                    return crud.get_file_metadata(conn, user_id, body.path)
+            existing_meta = await asyncio.to_thread(_get_existing_meta)
+            existing_size = (existing_meta.get('size') or 0) if existing_meta else 0
+            is_incoming_empty = (body.size == 0) or (os.path.getsize(safe_path) == 0)
 
-        size = body.size or os.path.getsize(safe_path)
-
-        # --- CRITICAL FIX: TRUNCATE PHYSICAL FILE ---
-        # Prevents "ghost data" if the file has shrunk.
-        if size == 0:
-            expected_enc_size = 0
-        else:
-            bs = get_block_size(size)
-            num_blocks = (size + bs - 1) // bs
-            expected_enc_size = size + (num_blocks * OVERHEAD)
-
-        real_fs_size = os.path.getsize(safe_path)
-        if real_fs_size > expected_enc_size:
-            logger.info(f"✂️ TRUNCATING: {body.path} from {real_fs_size} to {expected_enc_size}")
-            with open(safe_path, "a") as f:
-                f.truncate(expected_enc_size)
-        # --------------------------------------------
-
-        def _upsert():
-            with get_db() as conn:
-                crud.upsert_file_metadata(
-                    conn, user_id, body.path, actual_hash,
-                    size, body.updated_at,
-                    body.device_name, block_hashes
+            if existing_meta and existing_size > 0 and is_incoming_empty:
+                logger.warning(
+                    f"⚠️ FINALIZE: Refusing empty upload for {body.path} "
+                    f"(existing size={existing_size} bytes, incoming size={body.size}) — "
+                    f"refusing to replace it with an empty file"
                 )
-                conn.commit()
 
-        await asyncio.to_thread(_upsert)
+                # upload_fragment() opens the blob "r+b" (no truncate-on-open) and
+                # only overwrites the byte ranges it actually receives, so a
+                # genuinely-empty stream leaves the existing blob untouched — EXCEPT
+                # the client always encrypts at least one block even for a 0-byte
+                # plaintext (see UploadManager.processUploadBlocks's `if (fileSize ==
+                # 0L) 1 else ...`), so an empty upload still writes one block's worth
+                # of ciphertext at offset 0. That can already have clobbered the start
+                # of the real blob by the time we get here. version_manager.begin_upload
+                # snapshots the pre-upload file before the first fragment write, so
+                # restore that snapshot now to undo any partial damage.
+                def _restore_snapshot():
+                    versions = version_manager.list_versions(user_id, body.path)
+                    if not versions:
+                        return None
+                    newest = versions[0]['version_id']
+                    version_manager.restore_version(user_id, body.path, newest)
+                    return newest
+                restored = await asyncio.to_thread(_restore_snapshot)
+                if restored:
+                    logger.warning(f"⚠️ FINALIZE: Restored {body.path} from snapshot {restored} to undo any partial overwrite")
 
-        # Clear the upload-in-progress marker so the next overwrite of this file
-        # will produce a fresh snapshot.
-        version_manager.complete_upload(user_id, body.path)
+                # Clear the upload-in-progress marker so the next real overwrite of
+                # this file still produces a fresh snapshot.
+                version_manager.complete_upload(user_id, body.path)
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Refusing to replace existing {existing_size}-byte file with an empty upload",
+                )
+            # -------------------------------------------------------------------------
 
-    # Evict the lock entry so _upload_locks doesn't grow unboundedly.
-    await _release_upload_lock(user_id, body.path)
+            # Always recalculate block hashes from the file on disk; reusing the previous
+            # manifest would corrupt delta-sync if uploaded over a metadata cache miss.
+            _, block_hashes = await calculate_file_hash_and_blocks(safe_path)
+
+            size = body.size or os.path.getsize(safe_path)
+
+            # --- CRITICAL FIX: TRUNCATE PHYSICAL FILE ---
+            # Prevents "ghost data" if the file has shrunk.
+            if size == 0:
+                expected_enc_size = 0
+            else:
+                bs = get_block_size(size)
+                num_blocks = (size + bs - 1) // bs
+                expected_enc_size = size + (num_blocks * OVERHEAD)
+
+            real_fs_size = os.path.getsize(safe_path)
+            if real_fs_size > expected_enc_size:
+                logger.info(f"✂️ TRUNCATING: {body.path} from {real_fs_size} to {expected_enc_size}")
+                with open(safe_path, "a") as f:
+                    f.truncate(expected_enc_size)
+            # --------------------------------------------
+
+            def _upsert():
+                with get_db() as conn:
+                    crud.upsert_file_metadata(
+                        conn, user_id, body.path, actual_hash,
+                        size, body.updated_at,
+                        body.device_name, block_hashes
+                    )
+                    conn.commit()
+
+            await asyncio.to_thread(_upsert)
+
+            # Clear the upload-in-progress marker so the next overwrite of this file
+            # will produce a fresh snapshot.
+            version_manager.complete_upload(user_id, body.path)
+    finally:
+        # Evict the lock entry so _upload_locks doesn't grow unboundedly. In a
+        # `finally` so the 409 guard above (and any other early exit) can't leak
+        # an entry in _upload_locks forever.
+        await _release_upload_lock(user_id, body.path)
 
     # Extract system_id directly from the path structure
     system_id = body.path.split('/')[0] if '/' in body.path else 'unknown'
