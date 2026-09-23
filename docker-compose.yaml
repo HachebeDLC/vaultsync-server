@@ -15,6 +15,10 @@ services:
     - REDIS_HOST=redis
     volumes:
     - ./storage:/app/storage
+    # Only the weekly-updated master title DB is overridden from the host; the
+    # other title DBs ship in the image. The host file must exist before the
+    # first `up` (see README), otherwise Docker creates a directory in its place.
+    - ./assets/master_title_db.json:/app/app/assets/master_title_db.json
     depends_on:
     - db
     - redis

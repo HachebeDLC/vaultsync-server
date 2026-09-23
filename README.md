@@ -14,8 +14,15 @@ VaultSync is designed to run in Docker for maximum reliability.
 
 ```bash
 cp .env.example .env   # fill in VAULTSYNC_SECRET, DB_PASS, POSTGRES_PASSWORD
+mkdir -p assets && cp -n app/assets/master_title_db.json assets/   # host copy the weekly job updates
 docker compose up --build -d
 ```
+
+`assets/master_title_db.json` is bind-mounted over the copy in the image so the
+weekly Ofelia job (`app/update_master_db.py`) can refresh it. It must exist
+before the first `up`: if it is missing, Docker creates a directory at that path
+instead. The running server loads title DBs at startup, so restart the
+`vaultsync` service to pick up a refreshed file.
 
 ## Security
 VaultSync is a Zero-Knowledge system. The server stores hardware-encrypted fragments (`AES-256-CBC`) and has no access to your local Master Key.
