@@ -564,7 +564,6 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
                                     game_folder = parts[i+1]
                                     # Game folder is usually something like BASCUS-97399GodOfWar
                                     # We want SCUS-97399
-                                    import re
                                     match = re.search(r'([A-Z]{4}-\d{5})', game_folder.upper())
                                     if match:
                                         target_id = match.group(1)
