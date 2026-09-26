@@ -36,6 +36,26 @@ def get_block_size(file_size: int) -> int:
 def get_encrypted_block_size(file_size: int) -> int:
     return get_block_size(file_size) + OVERHEAD
 
+MAGIC_IV = 7 + 16                 # Magic (7) + IV (16), before each block's ciphertext
+
+def get_encrypted_file_size(file_size: int) -> int:
+    """Exact on-disk size of a NEOSYNC-encrypted file of `file_size` plaintext bytes.
+
+    Each block is magic + IV + AES-CBC ciphertext. PKCS7 pads 1-16 bytes (a
+    full 16 only when the block length is a multiple of 16), so only full
+    blocks cost exactly OVERHEAD. Assuming 16 for the last block too left up
+    to 15 stale bytes behind whenever a file shrank, and those blobs no longer
+    decrypt (WRONG_FINAL_BLOCK_LENGTH on download).
+    """
+    if file_size <= 0:
+        return 0
+    bs = get_block_size(file_size)
+    full, rem = divmod(file_size, bs)
+    size = full * (bs + OVERHEAD)
+    if rem:
+        size += rem + MAGIC_IV + (16 - rem % 16)
+    return size
+
 # Backwards compatibility / defaults
 BLOCK_SIZE = LARGE_BLOCK_SIZE
 ENCRYPTED_BLOCK_SIZE = BLOCK_SIZE + OVERHEAD

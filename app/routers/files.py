@@ -8,7 +8,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, BackgroundTasks, Header
 from fastapi.responses import FileResponse, StreamingResponse
 
-from ..config import STORAGE_DIR, get_block_size, OVERHEAD, get_encrypted_block_size, romm_emulator_for
+from ..config import STORAGE_DIR, get_block_size, get_encrypted_block_size, get_encrypted_file_size, romm_emulator_for
 from ..services.event_notifier import event_notifier
 from ..database import get_db
 from ..models import FileRequest, RestoreRequest, BlockCheckRequest, BlockDownloadRequest, FinalizeRequest, RomMSyncRequest, RomMPullRequest
@@ -334,13 +334,11 @@ async def finalize_upload(request: Request, body: FinalizeRequest, background_ta
             size = body.size or os.path.getsize(safe_path)
 
             # --- CRITICAL FIX: TRUNCATE PHYSICAL FILE ---
-            # Prevents "ghost data" if the file has shrunk.
-            if size == 0:
-                expected_enc_size = 0
-            else:
-                bs = get_block_size(size)
-                num_blocks = (size + bs - 1) // bs
-                expected_enc_size = size + (num_blocks * OVERHEAD)
+            # Prevents "ghost data" if the file has shrunk. The size must be
+            # exact: PKCS7 pads the last block by 1-16 bytes, not always 16.
+            with open(safe_path, "rb") as f:
+                is_encrypted = f.read(7) == b"NEOSYNC"
+            expected_enc_size = get_encrypted_file_size(size) if is_encrypted else size
 
             real_fs_size = os.path.getsize(safe_path)
             if real_fs_size > expected_enc_size:

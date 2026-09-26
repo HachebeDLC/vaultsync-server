@@ -1,11 +1,10 @@
 """Regression tests for the empty-upload-over-non-empty-metadata guard in
 `finalize_upload` (app/routers/files.py).
 
-Background: the production server was found holding zero-byte saves whose
-size the client's SAF scanner had misreported as 0 for files that genuinely
-had content (see FileScanner.kt's Os.fstat() size fix and
-SyncRepository.syncSystem's zero-size hashing bypass, both fixed alongside
-this guard). This is the last line of defense: even if a buggy or malicious
+Background: the production server was found holding zero-byte saves with no
+earlier versions (the files had been emptied on devices, e.g. a stray copy of
+a save tree being synced instead of the real one). This is the last line of
+defense: even if a buggy or malicious
 client sends a finalize claiming size 0 for a path that already has real,
 non-empty content, the server must refuse rather than silently erase it.
 
