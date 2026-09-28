@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 
 from ..database import get_db
 from ..crud import get_files_with_romm_id
@@ -8,6 +9,33 @@ from .romm_client import get_romm_client
 from .event_notifier import event_notifier
 
 logger = logging.getLogger("VaultSync")
+
+async def latest_romm_save_ms(client, romm_id: int) -> Optional[int]:
+    """updated_at (epoch ms) of RomM's most recent save for [romm_id], or None."""
+    import httpx
+    async with httpx.AsyncClient() as http:
+        resp = await http.get(
+            f"{client.base_url}/api/saves",
+            params={"rom_id": romm_id},
+            headers=client.headers,
+            timeout=30.0
+        )
+    if resp.status_code != 200:
+        return None
+    saves = resp.json()
+    if not saves:
+        return None
+    latest_save = sorted(saves, key=lambda x: x.get('updated_at', ''), reverse=True)[0]
+    dt_str = latest_save.get('updated_at', '')
+    if not dt_str:
+        return None
+    try:
+        # E.g. 2026-04-17T12:00:00Z; fromisoformat needs +00:00 instead of Z
+        dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    return int(dt.timestamp() * 1000)
+
 
 async def _process_user_romm_sync(user_id: int):
     # Retrieve user's romm creds
@@ -34,41 +62,22 @@ async def _process_user_romm_sync(user_id: int):
         path = f['path']
         romm_id = f['romm_id']
         local_updated_at = f['updated_at'] # epoch ms
-        
+        # RomM stamps a save with the time it received it, while updated_at is
+        # the file's own mtime, so the copy this server just pushed always
+        # looked newer: every push came back as romm_save_newer, the client
+        # re-uploaded it, and the upload pushed it again (the NDS saves on
+        # 2026-09-28, pushed at 08:11 and flagged at 08:14). Only a RomM save
+        # newer than our own last push counts.
+        baseline = max(local_updated_at or 0, f.get('romm_pushed_at') or 0)
+
         try:
-            import httpx
-            async with httpx.AsyncClient() as http:
-                resp = await http.get(
-                    f"{client.base_url}/api/saves",
-                    params={"rom_id": romm_id},
-                    headers=client.headers,
-                    timeout=30.0
-                )
-                
-            if resp.status_code != 200:
+            romm_updated_at = await latest_romm_save_ms(client, romm_id)
+            if romm_updated_at is None:
                 continue
-                
-            saves = resp.json()
-            if not saves:
-                continue
-                
-            latest_save = sorted(saves, key=lambda x: x.get('updated_at', ''), reverse=True)[0]
-            
-            # Parse ISO 8601 string to ms
-            try:
-                # E.g. 2026-04-17T12:00:00Z
-                dt_str = latest_save.get('updated_at', '')
-                if not dt_str: continue
-                # Replace Z with +00:00 for fromisoformat
-                dt_str = dt_str.replace('Z', '+00:00')
-                dt = datetime.fromisoformat(dt_str)
-                romm_updated_at = int(dt.timestamp() * 1000)
-            except Exception:
-                continue
-                
+
             # If RomM has a newer save (allow a 5-second delta to avoid push/pull loops)
-            if romm_updated_at > local_updated_at + 5000:
-                logger.info(f"Auto-Sync: Found newer save on RomM for {path} (RomM: {romm_updated_at} > Local: {local_updated_at})")
+            if romm_updated_at > baseline + 5000:
+                logger.info(f"Auto-Sync: Found newer save on RomM for {path} (RomM: {romm_updated_at} > Local: {local_updated_at}, pushed: {f.get('romm_pushed_at')})")
 
                 # Zero-knowledge: the server must never write to the vault. Just
                 # notify the client so it can pull, encrypt locally, and upload

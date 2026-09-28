@@ -132,12 +132,20 @@ def update_file_romm_id(conn, user_id: int, path: str, romm_id: int):
         (romm_id, user_id, path)
     )
 
+def set_file_romm_pushed_at(conn, user_id: int, path: str, pushed_at: int):
+    """RomM's own updated_at for the save this server just pushed (epoch ms)."""
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE files SET romm_pushed_at = %s WHERE user_id = %s AND path = %s",
+        (pushed_at, user_id, path)
+    )
+
 def get_files_with_romm_id(conn, user_id: int = None):
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     if user_id is not None:
-        cursor.execute("SELECT user_id, path, romm_id, updated_at FROM files WHERE romm_id IS NOT NULL AND user_id = %s", (user_id,))
+        cursor.execute("SELECT user_id, path, romm_id, updated_at, romm_pushed_at FROM files WHERE romm_id IS NOT NULL AND user_id = %s", (user_id,))
     else:
-        cursor.execute("SELECT user_id, path, romm_id, updated_at FROM files WHERE romm_id IS NOT NULL")
+        cursor.execute("SELECT user_id, path, romm_id, updated_at, romm_pushed_at FROM files WHERE romm_id IS NOT NULL")
     return cursor.fetchall()
 
 def delete_file_metadata(conn, user_id: int, path: str):

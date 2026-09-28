@@ -24,6 +24,7 @@ from ..services.romm_client import (
     RommUnavailable,
 )
 from ..services.title_db_service import title_db
+from ..services.auto_sync_romm import latest_romm_save_ms
 from ..utils import is_safe_path, calculate_file_hash_and_blocks
 from ..services.version_manager import version_manager
 from .. import crud
@@ -636,9 +637,20 @@ async def romm_sync(body: RomMSyncRequest, background_tasks: BackgroundTasks, cu
                     )
                 if success:
                     logger.info(f"Successfully synced {body.path} to RomM ID {rom_id}")
+                    # RomM's own timestamp for what we just pushed, read back the
+                    # way the auto-sync reads it, so the auto-sync can tell our
+                    # push apart from a genuinely newer save (no clock skew).
+                    pushed_at = None
+                    if not is_state:
+                        try:
+                            pushed_at = await latest_romm_save_ms(target_client, rom_id)
+                        except Exception as e:
+                            logger.warning(f"Could not read back RomM save time for {body.path}: {e}")
                     def _update_file():
                         with get_db() as conn:
                             crud.update_file_romm_id(conn, user_id, body.path, rom_id)
+                            if pushed_at is not None:
+                                crud.set_file_romm_pushed_at(conn, user_id, body.path, pushed_at)
                             conn.commit()
                     await asyncio.to_thread(_update_file)
                 

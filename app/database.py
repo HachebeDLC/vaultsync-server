@@ -136,6 +136,10 @@ def _run_migrations(cursor) -> None:
         logger.info("Migrating: Adding romm_id column to 'files'")
         cursor.execute("ALTER TABLE files ADD COLUMN romm_id INTEGER")
 
+    if not _col_exists(cursor, "files", "romm_pushed_at"):
+        logger.info("Migrating: Adding romm_pushed_at column to 'files'")
+        cursor.execute("ALTER TABLE files ADD COLUMN romm_pushed_at BIGINT")
+
     # Migrate files.blocks TEXT → JSONB
     cursor.execute(
         "SELECT data_type FROM information_schema.columns WHERE table_name='files' AND column_name='blocks'"
